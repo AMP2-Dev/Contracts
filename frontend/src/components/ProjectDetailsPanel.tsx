@@ -14,6 +14,7 @@ import {
   buildSebraeSpNfDiscriminacao,
   isSebraeSpProject,
 } from '../lib/sebraeSpUtils';
+import { sendSomaPackageViaSmtp, ensureConsultoriaCc } from '../lib/somaEmailService';
 
 interface ProjectDetailsPanelProps {
   project: Project | null;
@@ -38,12 +39,26 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
   const [govCopied, setGovCopied] = useState(false);
   const [nfTextCopied, setNfTextCopied] = useState(false);
   const [erEmailCopied, setErEmailCopied] = useState(false);
+  const [isSendingSomaEmail, setIsSendingSomaEmail] = useState(false);
+  const [somaEmailResult, setSomaEmailResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [customDestEmail, setCustomDestEmail] = useState('');
+  const [customCcEmail, setCustomCcEmail] = useState('consultoria@amp.adm.br');
 
   useEffect(() => {
     if (project) {
       setFormData({
         ...project
       });
+      setSomaEmailResult(null);
+      const uDemandante = project.dados_extra?.unidade_demandante || project.dados_extra?.er_credenciado || '';
+      const mEr = findSebraeSpErCredenciado(uDemandante, project.municipio);
+      const erMail = mEr?.email || project.dados_extra?.email_er_credenciado || project.dados_extra?.email_gestor || '';
+      setCustomDestEmail(erMail);
+      const gestorMail = project.dados_extra?.email_gestor || '';
+      const defaultCc = gestorMail && gestorMail.toLowerCase() !== erMail.toLowerCase()
+        ? ensureConsultoriaCc(gestorMail)
+        : 'consultoria@amp.adm.br';
+      setCustomCcEmail(defaultCc);
     }
   }, [project]);
 
@@ -232,33 +247,57 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
     }
   };
 
-  // Signed Term Upload
+  // Signed Term / Relatório Assinado Upload (lê o PDF em Base64 e persiste imediatamente)
   const handleTermUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setFormData((prev) => ({
-        ...prev,
-        dados_extra: {
-          ...(prev.dados_extra || {}),
-          termo_assinado_nome: file.name,
-          termo_assinado_data: new Date().toISOString(),
-        }
-      }));
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const b64 = reader.result as string;
+        setFormData((prev) => {
+          const updated = {
+            ...prev,
+            dados_extra: {
+              ...(prev.dados_extra || {}),
+              termo_assinado_nome: file.name,
+              termo_assinado_data: new Date().toISOString(),
+              termo_assinado_b64: b64,
+            }
+          };
+          if (updated.id) {
+            onUpdate(updated as Project);
+          }
+          return updated;
+        });
+      };
+      reader.readAsDataURL(file);
     }
   };
 
-  // NF Upload
+  // NF Upload (lê o PDF da Nota Fiscal em Base64 e persiste imediatamente)
   const handleNfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setFormData((prev) => ({
-        ...prev,
-        dados_extra: {
-          ...(prev.dados_extra || {}),
-          nota_fiscal_nome: file.name,
-          nota_fiscal_data: new Date().toISOString(),
-        }
-      }));
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const b64 = reader.result as string;
+        setFormData((prev) => {
+          const updated = {
+            ...prev,
+            dados_extra: {
+              ...(prev.dados_extra || {}),
+              nota_fiscal_nome: file.name,
+              nota_fiscal_data: new Date().toISOString(),
+              nota_fiscal_b64: b64,
+            }
+          };
+          if (updated.id) {
+            onUpdate(updated as Project);
+          }
+          return updated;
+        });
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -673,6 +712,9 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
 
   const handleUnidadeDemandanteChange = (novaUnidade: string) => {
     const found = findSebraeSpErCredenciado(novaUnidade, formData.municipio);
+    if (found?.email) {
+      setCustomDestEmail(found.email);
+    }
     setFormData((prev) => ({
       ...prev,
       estado: found ? 'SP' : (prev.estado || 'SP'),
@@ -686,42 +728,89 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
     }));
   };
 
-  const handleSendToSebrae = () => {
-    const destEmail = resolvedErEmail || resolvedGestorOsEmail || 'credenciamento.uac@sebraesp.com.br';
-    const ccEmail = (resolvedGestorOsEmail && resolvedGestorOsEmail !== destEmail) ? resolvedGestorOsEmail : '';
-    const osNum = formData.dados_extra?.os_number || formData.contrato_no || formData.codigo_rae || '';
-    const sgfNum = formData.dados_extra?.sgf || formData.dados_extra?.codigo_sgf || formData.contrato_no || '';
-    const raeNum = String(formData.codigo_rae || '').replace(/^RAE\s*/i, '').trim();
-    const clientName = formData.nome_cliente || formData.razao_social || 'Cliente';
+  const handleSendToSebrae = async () => {
+    const finalTo = (customDestEmail || resolvedErEmail || resolvedGestorOsEmail || '').trim();
+    if (!finalTo) {
+      alert('Informe o e-mail do destinatário (ER Credenciado SEBRAE) antes de enviar o pacote.');
+      return;
+    }
 
-    const subject = `Prestação de Contas SOMA SEBRAE-SP - OS ${osNum} - RAE ${raeNum} - ${clientName}`;
-    const body = [
-      `Prezados (${resolvedErName || 'Credenciamento SEBRAE-SP'}${resolvedErGestor ? ` - A/C ${resolvedErGestor}` : ''}),`,
-      ``,
-      `Encaminhamos em anexo os documentos referentes à prestação de serviços concluída no âmbito do Programa SOMA SEBRAE:`,
-      ``,
-      `- Unidade Demandante: ${resolvedErName || 'SEBRAE-SP'}`,
-      `- Nº da Ordem de Serviço: ${osNum}`,
-      `- Código SGF: ${sgfNum}`,
-      `- Código RAE: ${raeNum}`,
-      `- Cliente Atendido: ${clientName} (${formData.cnpj || formData.cpf || ''})`,
-      `- Produto: ${formData.solucao_contratada || ''}`,
-      `- Quantidade de Horas: ${formData.horas_realizadas || formData.horas_contratadas || 1} hora(s)`,
-      `- Data de Execução: ${formatDataSimples(formData.data_atendimento || formData.data_prevista_inicio)}`,
-      `- Valor Total da OS: R$ ${Number(formData.valor_consultoria || 170).toFixed(2).replace('.', ',')}`,
-      ``,
-      `Documentos anexos para pagamento:`,
-      `1. Nota Fiscal de Serviços Eletrônica (NFS-e Nacional)`,
-      `2. Relatório de Prestação de Serviço assinado (Consultor e Cliente) + Evidência/Print do Atendimento`,
-      ``,
-      `Atenciosamente,`,
-      `${formData.profissional_responsavel || 'MARCO ANTONIO PAVANI'}`,
-      `${formData.empresa_credenciada || 'AMP DO BRASIL SOLUCOES ADMINISTRATIVAS E TECNOLOGICAS LTDA'}`,
-      `CNPJ: 10.682.233/0001-75`,
-    ].join('\n');
+    const finalCc = ensureConsultoriaCc(
+      customCcEmail || (resolvedGestorOsEmail && resolvedGestorOsEmail !== finalTo ? resolvedGestorOsEmail : '')
+    );
 
-    const mailtoUrl = `mailto:${encodeURIComponent(destEmail)}?${ccEmail ? `cc=${encodeURIComponent(ccEmail)}&` : ''}subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    window.location.href = mailtoUrl;
+    const hasRelatorioPdf = Boolean(formData.dados_extra?.termo_assinado_b64);
+    const hasNfPdf = Boolean(formData.dados_extra?.nota_fiscal_b64);
+
+    if (!hasRelatorioPdf || !hasNfPdf) {
+      const faltantes: string[] = [];
+      if (!hasRelatorioPdf) {
+        faltantes.push(
+          formData.dados_extra?.termo_assinado_nome
+            ? `• Relatório/Termo Assinado (${formData.dados_extra.termo_assinado_nome} foi salvo apenas com o nome antes desta atualização — clique em "Anexar Assinado" no item 3 para carregar o PDF)`
+            : '• 3. Relatório / Termo Assinado em PDF'
+        );
+      }
+      if (!hasNfPdf) {
+        faltantes.push(
+          formData.dados_extra?.nota_fiscal_nome
+            ? `• Nota Fiscal (${formData.dados_extra.nota_fiscal_nome} foi salva apenas com o nome antes desta atualização — clique em "Anexar NF" no item 4 para carregar o PDF)`
+            : '• 4. Nota Fiscal (DANFSe) em PDF'
+        );
+      }
+
+      alert(
+        `Para enviar o Pacote SOMA completo pelo SMTP da AMP, anexe primeiro os PDFs pendentes:\n\n${faltantes.join('\n')}`
+      );
+      return;
+    }
+
+    setIsSendingSomaEmail(true);
+    setSomaEmailResult(null);
+
+    try {
+      const res = await sendSomaPackageViaSmtp(formData, {
+        to: finalTo,
+        cc: finalCc,
+        erName: resolvedErName,
+        erGestor: resolvedErGestor,
+      });
+
+      if (res.ok) {
+        const nowIso = new Date().toISOString();
+        const updatedProject = {
+          ...formData,
+          status: 'enviado_sebrae',
+          dados_extra: {
+            ...(formData.dados_extra || {}),
+            pacote_soma_enviado_em: nowIso,
+            pacote_soma_destinatario: res.to || finalTo,
+            pacote_soma_cc: res.cc || finalCc,
+            pacote_soma_message_id: res.messageId || '',
+          },
+        } as Project;
+
+        setFormData(updatedProject);
+        if (updatedProject.id) {
+          onUpdate(updatedProject);
+        }
+
+        const msgSucesso = `✅ Pacote SOMA enviado com sucesso via SMTP AMP!\nPara: ${res.to || finalTo}\nCópia (CC): ${res.cc || finalCc}\nAnexos enviados: Relatório Assinado + Nota Fiscal (${res.attachmentsCount || 2} PDFs).`;
+        setSomaEmailResult({ ok: true, msg: msgSucesso });
+      } else {
+        setSomaEmailResult({
+          ok: false,
+          msg: `❌ Falha ao enviar e-mail via SMTP: ${res.error || 'Erro desconhecido'}`,
+        });
+      }
+    } catch (err: any) {
+      setSomaEmailResult({
+        ok: false,
+        msg: `❌ Erro ao disparar Pacote SOMA: ${err?.message || 'Erro de conexão'}`,
+      });
+    } finally {
+      setIsSendingSomaEmail(false);
+    }
   };
 
   return (
@@ -1485,16 +1574,29 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
               </div>
             </div>
 
-            {/* Upload Termo Assinado */}
+            {/* Upload Termo / Relatório Assinado */}
             <div className="p-3.5 bg-white rounded-xl border border-slate-200 flex items-center justify-between gap-3">
-              <div>
-                <span className="text-xs font-bold text-slate-800 block">3. Termo Assinado pelo Cliente:</span>
-                <span className="text-[11px] text-slate-500">
-                  {formData.dados_extra?.termo_assinado_nome || 'Nenhum termo assinado anexado'}
+              <div className="min-w-0">
+                <span className="text-xs font-bold text-slate-800 block">
+                  3. Relatório / Termo Assinado pelo Cliente (PDF):
                 </span>
+                {formData.dados_extra?.termo_assinado_b64 ? (
+                  <span className="text-[11px] font-bold text-emerald-700 truncate block">
+                    ✅ PDF carregado para envio SMTP: {formData.dados_extra?.termo_assinado_nome || 'Relatorio_Assinado.pdf'}
+                  </span>
+                ) : formData.dados_extra?.termo_assinado_nome ? (
+                  <span className="text-[11px] font-semibold text-amber-700 block">
+                    ⚠️ {formData.dados_extra.termo_assinado_nome} (clique ao lado para carregar o PDF no envio SMTP)
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-slate-500 block">
+                    Nenhum relatório assinado em PDF anexado
+                  </span>
+                )}
               </div>
-              <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors shrink-0">
-                <span>Anexar Assinado</span>
+              <label className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors shrink-0 flex items-center gap-1.5 shadow-2xs">
+                <FileCheck size={13} />
+                <span>{formData.dados_extra?.termo_assinado_b64 ? 'Trocar PDF Assinado' : 'Anexar Assinado (PDF)'}</span>
                 <input type="file" accept=".pdf,image/*" onChange={handleTermUpload} className="hidden" />
               </label>
             </div>
@@ -1502,15 +1604,23 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
             {/* 4. Nota Fiscal (NF) — Estrutura Oficial SOMA SEBRAE & Upload */}
             <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
               <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div>
+                <div className="min-w-0">
                   <span className="text-xs font-extrabold text-slate-900 block">
-                    4. Nota Fiscal (NF) — Discriminação Oficial SOMA SEBRAE:
+                    4. Nota Fiscal (NF) — Discriminação Oficial SOMA SEBRAE & Anexo PDF:
                   </span>
-                  <span className="text-[11px] text-slate-500">
-                    {formData.dados_extra?.nota_fiscal_nome
-                      ? `✅ Arquivo anexado: ${formData.dados_extra.nota_fiscal_nome}`
-                      : 'Copie o texto padrão abaixo (item 1.1 do Manual) para emitir a NF e anexe o PDF.'}
-                  </span>
+                  {formData.dados_extra?.nota_fiscal_b64 ? (
+                    <span className="text-[11px] font-bold text-emerald-700 truncate block">
+                      ✅ PDF da NF carregado para envio SMTP: {formData.dados_extra.nota_fiscal_nome || 'Nota_Fiscal.pdf'}
+                    </span>
+                  ) : formData.dados_extra?.nota_fiscal_nome ? (
+                    <span className="text-[11px] font-semibold text-amber-700 block">
+                      ⚠️ {formData.dados_extra.nota_fiscal_nome} (clique em "Anexar NF (PDF)" para carregar o arquivo no SMTP)
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-slate-500 block">
+                      Copie o texto padrão abaixo (item 1.1 do Manual) para emitir a NF e anexe o PDF da DANFSe.
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button
@@ -1527,8 +1637,9 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                     <span>{nfTextCopied ? 'Discriminação Copiada!' : 'Copiar Discriminação da NF'}</span>
                   </button>
 
-                  <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors shrink-0">
-                    <span>Anexar NF</span>
+                  <label className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors shrink-0 flex items-center gap-1.5 shadow-2xs">
+                    <FileText size={13} />
+                    <span>{formData.dados_extra?.nota_fiscal_b64 ? 'Trocar NF (PDF)' : 'Anexar NF (PDF)'}</span>
                     <input type="file" accept=".pdf,image/*" onChange={handleNfUpload} className="hidden" />
                   </label>
                 </div>
@@ -1548,18 +1659,18 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
               </div>
             </div>
 
-            {/* Finalizar e enviar ao SEBRAE (Cruzado com o E-mail Credenciado da ER) */}
-            <div className="pt-2 space-y-2">
-              {resolvedErEmail && (
-                <div className="bg-blue-950 text-white rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs">
-                  <div className="min-w-0">
-                    <span className="text-[10px] uppercase tracking-wider text-blue-300 font-bold block">
-                      Destinatário Credenciado ({resolvedErName}):
-                    </span>
-                    <span className="font-extrabold text-emerald-300 truncate block">
-                      {resolvedErEmail} {resolvedErGestor ? `• ${resolvedErGestor}` : ''}
-                    </span>
-                  </div>
+            {/* 5. Disparo Direto do Pacote SOMA via Servidor SMTP AMP */}
+            <div className="p-4 bg-gradient-to-br from-blue-950 via-indigo-950 to-slate-900 text-white rounded-2xl border border-indigo-800/60 space-y-3 shadow-md">
+              <div className="flex items-center justify-between gap-2 flex-wrap border-b border-white/10 pb-2.5">
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-indigo-300 font-extrabold block">
+                    5. Disparo Direto via Servidor SMTP AMP (consultoria@amp.adm.br)
+                  </span>
+                  <span className="text-xs font-bold text-white block mt-0.5">
+                    Envia automaticamente o Relatório Assinado (PDF) + Nota Fiscal (PDF) ao SEBRAE
+                  </span>
+                </div>
+                {resolvedErEmail && (
                   <button
                     type="button"
                     onClick={() => {
@@ -1570,21 +1681,117 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                     className="bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold px-2.5 py-1 rounded-lg shrink-0 cursor-pointer flex items-center gap-1"
                   >
                     {erEmailCopied ? <Check size={12} /> : <Clipboard size={12} />}
-                    <span>{erEmailCopied ? 'Copiado' : 'Copiar'}</span>
+                    <span>{erEmailCopied ? 'E-mail ER Copiado' : 'Copiar E-mail ER'}</span>
                   </button>
+                )}
+              </div>
+
+              {/* Checklist visual dos 2 PDFs que serão anexados no e-mail */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div
+                  className={cn(
+                    'rounded-xl p-2.5 border flex items-center justify-between gap-2 text-xs',
+                    formData.dados_extra?.termo_assinado_b64
+                      ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200'
+                      : 'bg-amber-500/15 border-amber-400/40 text-amber-200'
+                  )}
+                >
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold uppercase block opacity-80">Anexo 1: Relatório Assinado</span>
+                    <span className="font-extrabold truncate block">
+                      {formData.dados_extra?.termo_assinado_b64
+                        ? `✅ ${formData.dados_extra.termo_assinado_nome || 'Relatorio_Assinado.pdf'}`
+                        : '⏳ Pendente anexar PDF'}
+                    </span>
+                  </div>
+                  <label className="bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold px-2 py-1 rounded-md cursor-pointer shrink-0">
+                    <span>{formData.dados_extra?.termo_assinado_b64 ? 'Trocar' : 'Anexar'}</span>
+                    <input type="file" accept=".pdf,image/*" onChange={handleTermUpload} className="hidden" />
+                  </label>
+                </div>
+
+                <div
+                  className={cn(
+                    'rounded-xl p-2.5 border flex items-center justify-between gap-2 text-xs',
+                    formData.dados_extra?.nota_fiscal_b64
+                      ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200'
+                      : 'bg-amber-500/15 border-amber-400/40 text-amber-200'
+                  )}
+                >
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold uppercase block opacity-80">Anexo 2: Nota Fiscal (PDF)</span>
+                    <span className="font-extrabold truncate block">
+                      {formData.dados_extra?.nota_fiscal_b64
+                        ? `✅ ${formData.dados_extra.nota_fiscal_nome || 'Nota_Fiscal.pdf'}`
+                        : '⏳ Pendente anexar PDF'}
+                    </span>
+                  </div>
+                  <label className="bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold px-2 py-1 rounded-md cursor-pointer shrink-0">
+                    <span>{formData.dados_extra?.nota_fiscal_b64 ? 'Trocar' : 'Anexar'}</span>
+                    <input type="file" accept=".pdf,image/*" onChange={handleNfUpload} className="hidden" />
+                  </label>
+                </div>
+              </div>
+
+              {/* Campos Para (ER) e Com Cópia (CC: consultoria@amp.adm.br) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-indigo-200 mb-1">
+                    Para ({resolvedErName || 'E-mail Credenciado ER'}):
+                  </label>
+                  <input
+                    type="email"
+                    value={customDestEmail}
+                    onChange={(e) => setCustomDestEmail(e.target.value)}
+                    placeholder="credenciamento.er.abc@sebraesp.com.br"
+                    className="w-full bg-white/10 border border-white/20 rounded-lg px-2.5 py-1.5 text-xs text-white font-semibold placeholder:text-slate-400 focus:outline-none focus:border-emerald-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-indigo-200 mb-1">
+                    Com Cópia Obrigatória (CC):
+                  </label>
+                  <input
+                    type="text"
+                    value={customCcEmail}
+                    onChange={(e) => setCustomCcEmail(e.target.value)}
+                    placeholder="consultoria@amp.adm.br"
+                    className="w-full bg-white/10 border border-white/20 rounded-lg px-2.5 py-1.5 text-xs text-emerald-300 font-semibold placeholder:text-slate-400 focus:outline-none focus:border-emerald-400"
+                  />
+                </div>
+              </div>
+
+              {formData.dados_extra?.pacote_soma_enviado_em && !somaEmailResult && (
+                <div className="bg-emerald-500/20 border border-emerald-400/40 rounded-xl px-3 py-2 text-[11px] text-emerald-200 font-semibold">
+                  ✅ Último envio registrado em {new Date(formData.dados_extra.pacote_soma_enviado_em).toLocaleString('pt-BR')} para{' '}
+                  <strong>{formData.dados_extra.pacote_soma_destinatario}</strong> (CC: {formData.dados_extra.pacote_soma_cc || 'consultoria@amp.adm.br'}).
+                </div>
+              )}
+
+              {somaEmailResult && (
+                <div
+                  className={cn(
+                    'rounded-xl px-3.5 py-2.5 text-xs font-bold whitespace-pre-line border',
+                    somaEmailResult.ok
+                      ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                      : 'bg-rose-500/20 border-rose-400/50 text-rose-200'
+                  )}
+                >
+                  {somaEmailResult.msg}
                 </div>
               )}
 
               <button
                 type="button"
+                disabled={isSendingSomaEmail}
                 onClick={handleSendToSebrae}
-                className="w-full bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-60 text-white font-extrabold text-xs py-3 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Send size={16} />
                 <span>
-                  {resolvedErEmail
-                    ? `Encaminhar Pacote SOMA para ${resolvedErName} (${resolvedErEmail})`
-                    : 'Encaminhar Pacote SOMA Completo ao SEBRAE'}
+                  {isSendingSomaEmail
+                    ? 'Enviando Pacote SOMA (Relatório + NF) via SMTP AMP...'
+                    : `Encaminhar Pacote SOMA para ${resolvedErName || 'SEBRAE'} (${customDestEmail || resolvedErEmail || 'E-mail ER'}) + CC consultoria@amp.adm.br`}
                 </span>
               </button>
             </div>

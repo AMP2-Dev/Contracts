@@ -6,6 +6,7 @@
     "@supabase/supabase-js": "^2.49.1",
     "imapflow": "^1.0.164",
     "mailparser": "^3.7.2",
+    "nodemailer": "^10.1.0",
     "pdf-parse": "^2.4.5"
   }
 }
