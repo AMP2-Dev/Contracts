@@ -70,20 +70,28 @@ Você é um assistente de extração de dados de altíssima precisão especializ
 Seu objetivo é ler o PDF anexado, localizar as tags e rótulos de cada campo e extrair os dados estruturados em JSON.
 
 REGRAS DE LEITURA E TAGS:
-- "codigo_rae": Procure por "Ordem de Serviço", "OS nº", "RAE nº", "Nº da OS" ou códigos como "07873" / "39090075".
-- "valor_consultoria": Procure por tags de valor como "Valor Total", "Valor da OS", "Valor R$", "Valor do Atendimento", "Valor Consultoria" ou cifras R$. Extraia o valor numérico total (ex: 350.00 ou 250.00). Retorne apenas um número float/int.
-- "programa": Procure pelo Produto Aplicado ou código SGF, ex: "39090075 ABRIR SGF 2026 | PADRÃO | 110" ou "SGF 2026".
-- "solucao_contratada": Procure pelo título/objeto da contratação, ex: "Faça a gestão financeira e tenha controle do seu dinheiro".
-- "modalidade": Identifique o formato de execução: "Remoto", "Presencial", "Online" ou "A Distância".
-- "nome_cliente" e "razao_social": Nome do cliente/empresa atendida (ex: "Ericka Clemente dos Santos Nunes").
-- "cnpj" e "cpf": Procure por CNPJ (ex: 66.212.730/0001-64) e CPF (ex: 364.678.198-02).
-- "telefone" / "celular": Procure por telefones ou celulares do cliente.
-- "email_cliente": E-mail do cliente.
-- "municipio" e "estado": Cidade e UF do cliente.
-- "horas_contratadas": Carga horária (ex: 1, 2, 4, 20).
-- "data_prevista_inicio": Data agendada do atendimento (formato YYYY-MM-DD).
+- "codigo_rae": Procure por "RAE:", "RAE nº", "Código RAE" (ex: "39666760" ou "39090075").
+- "os_number": Procure por "Nº ORDEM SERVIÇO" ou "Ordem de Serviço nº" (ex: "091108/2026").
+- "codigo_sgf": Procure por "CÓDIGO SGF" (ex: "SP0920261108").
+- "unidade_demandante": Procure por "UNIDADE DEMANDANTE" (ex: "ER Grande ABC", "ER Campinas", "ER Osasco", etc.).
+- "gestor_responsavel": Procure por "GESTOR RESPONSÁVEL" (ex: "PATRICIA TELLES DA SILVA").
+- "email_gestor": Procure pelo "E-MAIL" ao lado de Gestor Responsável (ex: "patriciat@sebraesp.com.br").
+- "edital": Procure por "Edital nº" (ex: "004/2026").
+- "processo_no": Procure por "Processo" (ex: "1777/2025").
+- "valor_consultoria": Procure por "VALOR TOTAL DA ORDEM DE SERVIÇO" ou "VALOR DA PRESTAÇÃO DE SERVIÇOS" (ex: 170.00). Retorne apenas um número float/int.
+- "programa": Código SGF + SGF 2026.
+- "solucao_contratada": Procure por "PRODUTO APLICADO" (ex: "Faça a gestão financeira e tenha controle do seu dinheiro").
+- "natureza": Procure por "NATUREZA" ("CONSULTORIA" ou "INSTRUTORIA").
+- "modalidade": Procure por "FORMATO DE EXECUÇÃO" ("À Distância (Online)" ou "Presencial").
+- "nome_cliente" e "razao_social": Em "DADOS DO(S) CLIENTE(S)", procure por "CLIENTE:" e "EMPRESA:" (ex: "HERMINIA ROSA SOUZA DE JESUS").
+- "cnpj" e "cpf": Procure pelo CNPJ (ex: "47.983.316/0001-00") e CPF do cliente.
+- "telefone" / "celular": Procure por "CONTATO:" ou "Telefone do Cliente".
+- "email_cliente": Procure pelo "E-MAIL:" do cliente em DADOS DO(S) CLIENTE(S).
+- "municipio" e "estado": Cidade e UF do cliente (se for SEBRAE-SP / SGF iniciando em SP, estado = "SP").
+- "horas_contratadas": Procure por "CARGA HORÁRIA" (ex: 1, 2, 4).
+- "data_prevista_inicio": Procure por "DATA PREVISTA PARA EXECUÇÃO" (ex: "30/09/2026").
 
-IMPORTANTE: Se o PDF contiver MÚLTIPLOS clientes ou demandas (ex: 10 empresas em um único lote), retorne SEMPRE uma ARRAY de objetos JSON, onde cada objeto representa 1 cliente/demanda individual.
+IMPORTANTE: Se o PDF contiver MÚLTIPLOS clientes ou demandas (ex: 9 empresas em um único lote), retorne SEMPRE uma ARRAY de objetos JSON, onde cada objeto representa 1 cliente/demanda individual.
 Não retorne nada além do JSON puro.
 `;
 
@@ -139,6 +147,14 @@ Não retorne nada além do JSON puro.
       ...item,
       consultor_id: emailData.consultor_id,
       status: 'novo_contrato',
+      dados_extra: {
+        ...(item.dados_extra || {}),
+        os_number: item.os_number || null,
+        sgf: item.codigo_sgf || null,
+        unidade_demandante: item.unidade_demandante || null,
+        gestor: item.gestor_responsavel || null,
+        email_gestor: item.email_gestor || null,
+      }
     }));
 
     const { error: insertError } = await supabase
@@ -155,7 +171,7 @@ Não retorne nada além do JSON puro.
       .update({ status: 'processado', erro_detalhe: null })
       .eq('id', emailProcessadoId);
 
-    return new Response(JSON.stringify({ success: true, data: novoProjeto }), {
+    return new Response(JSON.stringify({ success: true, data: novosProjetos }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 

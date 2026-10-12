@@ -155,7 +155,7 @@ export function ProjectCard({ project, isOverlay, onClick, onDelete, onStatusCha
           </div>
         </div>
 
-        {/* Badges: Programa, Modalidade, Carga Horária */}
+        {/* Badges: Programa, Modalidade, Carga Horária, ER SP */}
         <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
           {project.programa && (
             <span className="bg-purple-100 text-purple-800 border border-purple-200 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider">
@@ -175,8 +175,16 @@ export function ProjectCard({ project, isOverlay, onClick, onDelete, onStatusCha
           {/* Carga Horária Badge */}
           <span className="bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1 shrink-0">
             <Clock size={11} className="text-sky-600 shrink-0" />
-            <span>{project.horas_contratadas != null ? String(project.horas_contratadas).replace('.', ',') : 4}h</span>
+            <span>{project.horas_contratadas != null ? String(project.horas_contratadas).replace('.', ',') : 1}h</span>
           </span>
+          {(project.dados_extra?.unidade_demandante || project.dados_extra?.er_credenciado) && (
+            <span
+              className="bg-blue-50 text-blue-800 border border-blue-200 text-[10px] font-extrabold px-2 py-0.5 rounded-md tracking-tight"
+              title={project.dados_extra?.email_er_credenciado ? `Enviar para: ${project.dados_extra.email_er_credenciado}` : undefined}
+            >
+              {project.dados_extra?.er_credenciado || project.dados_extra?.unidade_demandante}
+            </span>
+          )}
         </div>
       </div>
 

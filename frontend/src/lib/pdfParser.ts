@@ -1,5 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import type { Project } from '../types/database';
+import { findSebraeSpErCredenciado, buildSebraeSpNfDiscriminacao } from './sebraeSpUtils';
 
 // Configure pdfjs worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
@@ -48,36 +49,75 @@ export function parseOsText(text: string, fileName: string): Project[] {
   const sgfMatch = text.match(/CÓDIGO\s*SGF\s*[:\s]*([A-Z0-9]+)/i);
   const codigoSgf = sgfMatch ? sgfMatch[1].trim() : null;
 
-  // Extract Gestor
-  const gestorMatch = text.match(/GESTOR\s*RESPONSÁVEL\s*[:\s]*([A-Z\s]+?)(?=\s*E-MAIL|\s*CÓDIGO|$)/i);
-  const gestor = gestorMatch ? gestorMatch[1].trim() : null;
+  // Extract Unidade Demandante (ex: ER Grande ABC, ER Campinas, etc.)
+  const unidadeMatch = text.match(/UNIDADE\s*DEMANDANTE\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ0-9\s\-]+?)(?=\s*GESTOR\s*RESPONSÁVEL|\s*CÓDIGO\s*SGF|\s*E-MAIL|$)/i);
+  const unidadeDemandante = unidadeMatch ? unidadeMatch[1].trim().replace(/\s+/g, ' ') : null;
 
-  // Extract E-mail Gestor
+  // Extract Gestor da OS
+  const gestorMatch = text.match(/GESTOR\s*RESPONSÁVEL\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s]+?)(?=\s*E-MAIL|\s*CÓDIGO|$)/i);
+  const gestor = gestorMatch ? gestorMatch[1].trim().replace(/\s+/g, ' ') : null;
+
+  // Extract E-mail Gestor da OS
   const emailGestorMatch = text.match(/E-MAIL\s*[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
   const emailGestor = emailGestorMatch ? emailGestorMatch[1].trim() : null;
 
-  // Extract Produto Aplicado
+  // Extract Carga Horária (ex: CARGA HORÁRIA 1 ou Consultoria Padrão: 1 horas)
+  const cargaMatch =
+    text.match(/CARGA\s*HORÁRIA\s*[:\s]*([0-9]+(?:[.,][0-9]+)?)/i) ||
+    text.match(/NATUREZA\s*[:\s]*[^\d]*([0-9]+(?:[.,][0-9]+)?)\s*hora/i);
+  const horasContratadas = cargaMatch ? parseFloat(cargaMatch[1].replace(',', '.')) || 1 : 1;
+
+  // Extract Valor da OS
+  const valorMatch = text.match(/VALOR\s*(?:TOTAL\s*DA\s*ORDEM\s*DE\s*SERVIÇO|DA\s*PRESTAÇÃO\s*DE\s*SERVIÇOS)\s*[:\s]*R\$\s*([0-9.,]+)/i);
+  const valorConsultoria = valorMatch
+    ? parseFloat(valorMatch[1].replace(/\./g, '').replace(',', '.')) || 170
+    : (horasContratadas === 1 ? 170 : 1224);
+
+  // Extract Data Prevista para Execução
+  const dataPrevistaMatch = text.match(/DATA\s*PREVISTA\s*PARA\s*EXECUÇÃO\s*[:\s]*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i);
+  const dataPrevistaBr = dataPrevistaMatch ? dataPrevistaMatch[1].trim() : now.split('T')[0];
+
+  // Extract Edital e Processo
+  const editalMatch = text.match(/Edital\s*(?:n[º°]?\s*)?([0-9]{3}\/[0-9]{4})/i);
+  const edital = editalMatch ? editalMatch[1].trim() : '004/2026';
+  const processoMatch = text.match(/Processo\s*(?:n[º°]?\s*)?([0-9]+\/[0-9]{4})/i);
+  const processoNo = processoMatch ? processoMatch[1].trim() : '1777/2025';
+
+  // Extract Produto Aplicado (remove sufixo truncado "(presencial/remoto/na")
   const produtoMatch = text.match(/PRODUTO\s*APLICADO\s*[:\s]*([^]+?)(?=\s*OBJETO|\s*DADOS DO|$)/i);
-  const produto = produtoMatch ? produtoMatch[1].trim().replace(/\s+/g, ' ') : 'Consultoria Sebrae';
+  const produtoRaw = produtoMatch ? produtoMatch[1].trim().replace(/\s+/g, ' ') : 'Faça a gestão financeira e tenha controle do seu dinheiro';
+  const produto = produtoRaw.replace(/\s*\(presencial\/remoto\/na.*$/i, '').trim();
 
   // Extract Modalidade
-  const isPresencial = /presencial/i.test(text);
-  const modalidade = isPresencial ? 'Presencial' : 'À Distância (Online)';
-
   const formatoMatch = text.match(/FORMATO\s*DE\s*EXECUÇÃO\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\(\)\-]+?)(?=\s*CARGA\s*HORÁRIA|\s*LOCAL|$)/i);
+  const formatoRaw = formatoMatch ? formatoMatch[1].trim() : '';
+  const isPresencial = /presencial/i.test(formatoRaw);
+  const modalidade = isPresencial ? 'Presencial' : 'À Distância (Online)';
+  const plataformaUtilizada = isPresencial ? 'Presencial' : 'Plataforma Microsoft Teams';
+
   const representanteMatch = text.match(/REPRESENTANTE\s*LEGAL\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\-]+?)(?=\s*E\s*-\s*MAIL|\s*TEL|\s*CNPJ|$)/i);
   const fornecedorMatch = text.match(/DADOS\s*DO\s*FORNECEDOR\s*CREDENCIADO[\s\S]*?RAZÃO\s*SOCIAL\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\-]+?)(?=\s*CNPJ|\s*ENDEREÇO|$)/i);
   const naturezaMatch = text.match(/NATUREZA\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\:]+?)(?=\s*ÁREA|\s*SUBÁREA|$)/i);
 
-  const formatoRaw = formatoMatch ? formatoMatch[1].trim() : modalidade;
-  const plataformaUtilizada = /presencial/i.test(formatoRaw) ? 'Presencial' : 'Plataforma Microsoft Teams';
   const profissionalResponsavel = representanteMatch ? representanteMatch[1].trim() : 'MARCO ANTONIO PAVANI';
   const empresaCredenciada = fornecedorMatch ? fornecedorMatch[1].trim().replace(/\s+/g, ' ') : 'AMP DO BRASIL SOLUCOES ADMINISTRATIVAS E TECNOLOGICAS LTDA';
-  const natureza = (naturezaMatch && /consultoria/i.test(naturezaMatch[1])) ? 'CONSULTORIA' : 'CONSULTORIA';
+  const natureza = (naturezaMatch && /instrutoria/i.test(naturezaMatch[1])) ? 'INSTRUTORIA' : 'CONSULTORIA';
   const contratoNo = codigoSgf || osNumber;
 
+  // Identifica se é OS de São Paulo e cruza UNIDADE DEMANDANTE com a tabela de E-mails Credenciados ER
+  const isSp = Boolean(
+    (codigoSgf && codigoSgf.toUpperCase().startsWith('SP')) ||
+    unidadeDemandante ||
+    (emailGestor && emailGestor.toLowerCase().includes('@sebraesp.com.br')) ||
+    /SEBRAE[\s\-]*SP/i.test(text)
+  );
+  const erCredenciado = findSebraeSpErCredenciado(unidadeDemandante);
+  const estadoPadrao = isSp ? 'SP' : 'RJ';
+  const municipioPadrao = isSp
+    ? (erCredenciado?.er.replace(/^ER\s+/i, '').replace(/^Capital.*$/i, 'São Paulo') || 'São Paulo')
+    : 'Rio de Janeiro';
+
   // Parse Clients from DADOS DO(S) CLIENTE(S)
-  // Format typically: Cliente 01 Código RAE: 39165712 CPF do Cliente: 389.775.118-60 Nome do Cliente: PRICILA DE OLIVEIRA CIACCO CNPJ: 52.018.274/0001-01 Telefone do Cliente: (19) 98266-0000
   const clientRegex = /Cliente\s*(\d+)[\s\S]*?Código\s*RAE\s*[:\s]*([0-9]+)[\s\S]*?CPF\s*(?:do\s*Cliente)?\s*[:\s]*([0-9.\-]+)[\s\S]*?Nome\s*(?:do\s*Cliente)?\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\-]+?)\s*CNPJ\s*[:\s]*([0-9.\/\-]+)[\s\S]*?Telefone\s*(?:do\s*Cliente)?\s*[:\s]*(\([0-9]{2}\)\s*[0-9\-\s]+)/gi;
 
   const parsedClients: any[] = [];
@@ -95,7 +135,6 @@ export function parseOsText(text: string, fileName: string): Project[] {
 
   // Fallback matchers if regex is slightly off
   if (parsedClients.length === 0) {
-    // Try splitting by "Cliente XX" or "Cliente "
     const clientBlocks = text.split(/Cliente\s+\d+/i);
     if (clientBlocks.length > 1) {
       for (let i = 1; i < clientBlocks.length; i++) {
@@ -120,75 +159,138 @@ export function parseOsText(text: string, fileName: string): Project[] {
     }
   }
 
-  // If no structured clients found, create single project
+  // Formato SOMA SEBRAE SP de cliente único em DADOS DO(S) CLIENTE(S):
+  // Ex: "RAE: 39666760 EMPRESA: 47.983.316 HERMÍNIA ROSA SOUZA DE JESUS CLIENTE: HERMINIA ROSA SOUZA DE JESUS CONTATO: 11 99306-8169 E-MAIL: HERMINIAROSAFOREVER@GMAIL.COM"
   if (parsedClients.length === 0) {
-    const singleRae = text.match(/(?:RAE|RAE\s*Código)\s*[:\s]*([0-9\/\-]+)/i);
-    const singleCnpj = text.match(/CNPJ\s*[:\s]*([0-9.\/\-]+)/i);
-    const singleCpf = text.match(/CPF\s*[:\s]*([0-9.\-]+)/i);
-    const singleNome = text.match(/Nome\s*(?:do\s*Cliente)?\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\-]{3,50})/i);
+    const somaSectionMatch = text.match(/DADOS\s*DO\(S\)\s*CLIENTE\(S\)([\s\S]*?)(?=VIGÊNCIA|FORMATO\s*DE\s*EXECUÇÃO|$)/i);
+    const searchArea = somaSectionMatch ? somaSectionMatch[1] : text;
 
-    return [{
-      id: `pdf-${Date.now()}`,
+    const singleRae = searchArea.match(/RAE\s*[:\s]*([0-9\/\-]+)/i) || text.match(/(?:RAE|RAE\s*Código)\s*[:\s]*([0-9\/\-]+)/i);
+    const clienteExplicit = searchArea.match(/CLIENTE\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\-]+?)(?=\s*CONTATO|\s*E-MAIL|\s*VIGÊNCIA|$)/i);
+    const empresaExplicit = searchArea.match(/EMPRESA\s*[:\s]*([0-9.\-\/]+)?\s*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\-]+?)(?=\s*CLIENTE|\s*CONTATO|$)/i);
+    const cnpjExplicit =
+      searchArea.match(/EMPRESA\s*[:\s]*([0-9]{2}\.[0-9]{3}\.[0-9]{3}(?:\/[0-9]{4}-[0-9]{2})?)/i) ||
+      searchArea.match(/CNPJ\s*[:\s]*([0-9.\/\-]+)/i);
+    const singleCpf = searchArea.match(/CPF\s*[:\s]*([0-9.\-]+)/i);
+    const contatoExplicit = searchArea.match(/CONTATO\s*[:\s]*([0-9\(\)\s\-]+)/i);
+    const emailExplicitMatches = searchArea.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/gi);
+    const emailCliente = emailExplicitMatches
+      ? emailExplicitMatches.find((e) => !e.toLowerCase().includes('sebrae') && !e.toLowerCase().includes('ampliando'))
+      : null;
+
+    let rawCnpj = cnpjExplicit ? cnpjExplicit[1].trim() : null;
+    if (rawCnpj && !rawCnpj.includes('/')) {
+      rawCnpj = `${rawCnpj}/0001-00`;
+    }
+
+    const nomeClienteFinal = clienteExplicit
+      ? clienteExplicit[1].trim()
+      : (empresaExplicit?.[2]?.trim() || fileName.replace(/\.pdf$/i, ''));
+
+    const razaoSocialFinal = empresaExplicit
+      ? `${empresaExplicit[1] ? empresaExplicit[1].trim() + ' ' : ''}${empresaExplicit[2]?.trim() || ''}`.trim()
+      : nomeClienteFinal;
+
+    const singleProject: Project = {
+      id: `pdf-${osNumber ? osNumber.replace(/\D/g, '') : Date.now()}`,
       consultor_id: 'admin-1',
       codigo_rae: singleRae ? singleRae[1] : (osNumber ? `OS ${osNumber}` : `RAE-${Math.floor(1000 + Math.random() * 9000)}`),
       status: 'novo_contrato',
-      nome_cliente: singleNome ? singleNome[1].trim() : fileName.replace(/\.pdf$/i, ''),
-      razao_social: singleNome ? singleNome[1].trim() : fileName.replace(/\.pdf$/i, ''),
-      cnpj: singleCnpj ? singleCnpj[1] : null,
+      nome_cliente: nomeClienteFinal,
+      razao_social: razaoSocialFinal,
+      cnpj: rawCnpj,
       cpf: singleCpf ? singleCpf[1] : null,
+      telefone: contatoExplicit ? contatoExplicit[1].trim() : null,
+      celular: contatoExplicit ? contatoExplicit[1].trim() : null,
+      email_cliente: emailCliente || null,
+      municipio: municipioPadrao,
+      estado: estadoPadrao,
+      programa: codigoSgf ? `${codigoSgf} SGF 2026` : 'Consultoria Sebrae',
       solucao_contratada: produto,
-      objetivo_atendimento: `Ordem de Serviço ${osNumber || ''} importada via PDF.`,
-      horas_contratadas: 4,
-      horas_realizadas: 0,
-      data_prevista_inicio: now.split('T')[0],
-      data_prevista_fim: now.split('T')[0],
+      objetivo_atendimento: `Ordem de Serviço ${osNumber || ''} - ${unidadeDemandante || 'Sebrae'}`,
+      horas_contratadas: horasContratadas,
+      horas_realizadas: horasContratadas,
+      data_atendimento: dataPrevistaBr,
+      data_prevista_inicio: dataPrevistaBr,
+      data_prevista_fim: dataPrevistaBr,
       modalidade,
-      valor_consultoria: 1224,
+      valor_consultoria: valorConsultoria,
+      edital,
+      processo_no: processoNo,
       contrato_no: contratoNo,
       empresa_credenciada: empresaCredenciada,
       profissional_responsavel: profissionalResponsavel,
-      natureza: natureza,
+      natureza,
       plataforma_utilizada: plataformaUtilizada,
-      observacoes: `Gestor: ${gestor || 'N/A'} (${emailGestor || 'N/A'}) | SGF: ${codigoSgf || 'N/A'}`,
-      dados_extra: { os_number: osNumber, sgf: codigoSgf, gestor, email_gestor: emailGestor },
+      observacoes: `Unidade: ${unidadeDemandante || erCredenciado?.er || 'N/A'} | E-mail ER Credenciado: ${erCredenciado?.email || 'N/A'} (${erCredenciado?.gestor || 'N/A'}) | Gestor OS: ${gestor || 'N/A'} (${emailGestor || 'N/A'}) | SGF: ${codigoSgf || 'N/A'}`,
+      dados_extra: {
+        os_number: osNumber,
+        sgf: codigoSgf,
+        codigo_sgf: codigoSgf,
+        unidade_demandante: unidadeDemandante || erCredenciado?.er || null,
+        er_credenciado: erCredenciado?.er || unidadeDemandante || null,
+        gestor_er_credenciado: erCredenciado?.gestor || null,
+        email_er_credenciado: erCredenciado?.email || null,
+        gestor,
+        email_gestor: emailGestor,
+      },
       criado_em: now,
       atualizado_em: now,
-    }];
+    };
+
+    singleProject.dados_extra.nf_discriminacao = buildSebraeSpNfDiscriminacao(singleProject);
+    return [singleProject];
   }
 
   // Desmembrar: Generate 1 Project per Client
-  return parsedClients.map((client, idx) => ({
-    id: `pdf-${osNumber || Date.now()}-${idx + 1}`,
-    consultor_id: 'admin-1',
-    codigo_rae: client.rae ? client.rae : (osNumber ? `OS ${osNumber}` : `RAE-${idx + 1}`),
-    status: 'novo_contrato' as const,
-    nome_cliente: client.nome,
-    razao_social: client.nome,
-    cnpj: client.cnpj,
-    cpf: client.cpf,
-    telefone: client.telefone,
-    solucao_contratada: produto,
-    objetivo_atendimento: `Atendimento ${client.nome} - OS ${osNumber || ''} (Cliente ${idx + 1}/${parsedClients.length})`,
-    horas_contratadas: 4,
-    horas_realizadas: 0,
-    data_prevista_inicio: now.split('T')[0],
-    data_prevista_fim: now.split('T')[0],
-    modalidade,
-    valor_consultoria: 1224,
-    contrato_no: contratoNo,
-    empresa_credenciada: empresaCredenciada,
-    profissional_responsavel: profissionalResponsavel,
-    natureza: natureza,
-    plataforma_utilizada: plataformaUtilizada,
-    observacoes: `OS ${osNumber || ''} | Cliente ${idx + 1} de ${parsedClients.length} | Gestor: ${gestor || 'LIVIA ROMERO SILVA'} (${emailGestor || 'liviars@sebraesp.com.br'})`,
-    dados_extra: {
-      os_number: osNumber,
-      sgf: codigoSgf,
-      gestor,
-      email_gestor: emailGestor,
-      cliente_num: client.num || idx + 1,
-    },
-    criado_em: now,
-    atualizado_em: now,
-  }));
+  return parsedClients.map((client, idx) => {
+    const proj: Project = {
+      id: `pdf-${osNumber || Date.now()}-${idx + 1}`,
+      consultor_id: 'admin-1',
+      codigo_rae: client.rae ? client.rae : (osNumber ? `OS ${osNumber}` : `RAE-${idx + 1}`),
+      status: 'novo_contrato' as const,
+      nome_cliente: client.nome,
+      razao_social: client.nome,
+      cnpj: client.cnpj,
+      cpf: client.cpf,
+      telefone: client.telefone,
+      celular: client.telefone,
+      municipio: municipioPadrao,
+      estado: estadoPadrao,
+      programa: codigoSgf ? `${codigoSgf} SGF 2026` : 'Consultoria Sebrae',
+      solucao_contratada: produto,
+      objetivo_atendimento: `Atendimento ${client.nome} - OS ${osNumber || ''} (Cliente ${idx + 1}/${parsedClients.length})`,
+      horas_contratadas: horasContratadas,
+      horas_realizadas: horasContratadas,
+      data_atendimento: dataPrevistaBr,
+      data_prevista_inicio: dataPrevistaBr,
+      data_prevista_fim: dataPrevistaBr,
+      modalidade,
+      valor_consultoria: valorConsultoria,
+      edital,
+      processo_no: processoNo,
+      contrato_no: contratoNo,
+      empresa_credenciada: empresaCredenciada,
+      profissional_responsavel: profissionalResponsavel,
+      natureza,
+      plataforma_utilizada: plataformaUtilizada,
+      observacoes: `OS ${osNumber || ''} | Unidade: ${unidadeDemandante || erCredenciado?.er || 'SP'} (${erCredenciado?.email || emailGestor || ''}) | Cliente ${idx + 1}/${parsedClients.length} | Gestor: ${gestor || erCredenciado?.gestor || 'Sebrae'}`,
+      dados_extra: {
+        os_number: osNumber,
+        sgf: codigoSgf,
+        codigo_sgf: codigoSgf,
+        unidade_demandante: unidadeDemandante || erCredenciado?.er || null,
+        er_credenciado: erCredenciado?.er || unidadeDemandante || null,
+        gestor_er_credenciado: erCredenciado?.gestor || null,
+        email_er_credenciado: erCredenciado?.email || null,
+        gestor,
+        email_gestor: emailGestor,
+        cliente_num: client.num || idx + 1,
+      },
+      criado_em: now,
+      atualizado_em: now,
+    };
+    proj.dados_extra.nf_discriminacao = buildSebraeSpNfDiscriminacao(proj);
+    return proj;
+  });
 }

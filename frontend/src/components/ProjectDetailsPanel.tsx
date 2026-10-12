@@ -8,6 +8,12 @@ import { createAutentiqueDocument } from '../lib/autentique';
 import { SomaAiAssistant } from './SomaAiAssistant';
 import { WHATSAPP_TEMPLATES, buildWhatsAppMessage, openWhatsApp } from '../lib/whatsapp';
 import { getSavedCertificateA1, signDocumentHash } from '../lib/certificateA1';
+import {
+  SEBRAE_SP_ER_CREDENCIADOS,
+  findSebraeSpErCredenciado,
+  buildSebraeSpNfDiscriminacao,
+  isSebraeSpProject,
+} from '../lib/sebraeSpUtils';
 
 interface ProjectDetailsPanelProps {
   project: Project | null;
@@ -30,6 +36,8 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isSendingAutentique, setIsSendingAutentique] = useState(false);
   const [govCopied, setGovCopied] = useState(false);
+  const [nfTextCopied, setNfTextCopied] = useState(false);
+  const [erEmailCopied, setErEmailCopied] = useState(false);
 
   useEffect(() => {
     if (project) {
@@ -651,8 +659,69 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
     }
   };
 
+  // Resolve ER Credenciado e E-mail Responsável para São Paulo
+  const currentUnidadeDemandante =
+    formData.dados_extra?.unidade_demandante ||
+    formData.dados_extra?.er_credenciado ||
+    '';
+  const matchedEr = findSebraeSpErCredenciado(currentUnidadeDemandante, formData.municipio);
+  const resolvedErName = matchedEr?.er || currentUnidadeDemandante || '';
+  const resolvedErGestor = matchedEr?.gestor || formData.dados_extra?.gestor_er_credenciado || '';
+  const resolvedErEmail = matchedEr?.email || formData.dados_extra?.email_er_credenciado || '';
+  const resolvedGestorOsEmail = formData.dados_extra?.email_gestor || '';
+  const generatedNfDiscriminacao = buildSebraeSpNfDiscriminacao(formData);
+
+  const handleUnidadeDemandanteChange = (novaUnidade: string) => {
+    const found = findSebraeSpErCredenciado(novaUnidade, formData.municipio);
+    setFormData((prev) => ({
+      ...prev,
+      estado: found ? 'SP' : (prev.estado || 'SP'),
+      dados_extra: {
+        ...(prev.dados_extra || {}),
+        unidade_demandante: novaUnidade,
+        er_credenciado: found?.er || novaUnidade,
+        gestor_er_credenciado: found?.gestor || '',
+        email_er_credenciado: found?.email || '',
+      },
+    }));
+  };
+
   const handleSendToSebrae = () => {
-    alert(`Pacote completo do SEBRAE SOMA (RAE ${formData.codigo_rae}) compilado com sucesso!\n\nDocumentos inclusos:\n- Relatório de Prestação de Serviço (SOMA SEBRAE)\n- Foto do Cliente / Print de Tela\n- Termo Assinado\n- Nota Fiscal da Consultoria\n\nDisparando e-mail de fechamento...`);
+    const destEmail = resolvedErEmail || resolvedGestorOsEmail || 'credenciamento.uac@sebraesp.com.br';
+    const ccEmail = (resolvedGestorOsEmail && resolvedGestorOsEmail !== destEmail) ? resolvedGestorOsEmail : '';
+    const osNum = formData.dados_extra?.os_number || formData.contrato_no || formData.codigo_rae || '';
+    const sgfNum = formData.dados_extra?.sgf || formData.dados_extra?.codigo_sgf || formData.contrato_no || '';
+    const raeNum = String(formData.codigo_rae || '').replace(/^RAE\s*/i, '').trim();
+    const clientName = formData.nome_cliente || formData.razao_social || 'Cliente';
+
+    const subject = `Prestação de Contas SOMA SEBRAE-SP - OS ${osNum} - RAE ${raeNum} - ${clientName}`;
+    const body = [
+      `Prezados (${resolvedErName || 'Credenciamento SEBRAE-SP'}${resolvedErGestor ? ` - A/C ${resolvedErGestor}` : ''}),`,
+      ``,
+      `Encaminhamos em anexo os documentos referentes à prestação de serviços concluída no âmbito do Programa SOMA SEBRAE:`,
+      ``,
+      `- Unidade Demandante: ${resolvedErName || 'SEBRAE-SP'}`,
+      `- Nº da Ordem de Serviço: ${osNum}`,
+      `- Código SGF: ${sgfNum}`,
+      `- Código RAE: ${raeNum}`,
+      `- Cliente Atendido: ${clientName} (${formData.cnpj || formData.cpf || ''})`,
+      `- Produto: ${formData.solucao_contratada || ''}`,
+      `- Quantidade de Horas: ${formData.horas_realizadas || formData.horas_contratadas || 1} hora(s)`,
+      `- Data de Execução: ${formatDataSimples(formData.data_atendimento || formData.data_prevista_inicio)}`,
+      `- Valor Total da OS: R$ ${Number(formData.valor_consultoria || 170).toFixed(2).replace('.', ',')}`,
+      ``,
+      `Documentos anexos para pagamento:`,
+      `1. Nota Fiscal de Serviços Eletrônica (NFS-e Nacional)`,
+      `2. Relatório de Prestação de Serviço assinado (Consultor e Cliente) + Evidência/Print do Atendimento`,
+      ``,
+      `Atenciosamente,`,
+      `${formData.profissional_responsavel || 'MARCO ANTONIO PAVANI'}`,
+      `${formData.empresa_credenciada || 'AMP DO BRASIL SOLUCOES ADMINISTRATIVAS E TECNOLOGICAS LTDA'}`,
+      `CNPJ: 10.682.233/0001-75`,
+    ].join('\n');
+
+    const mailtoUrl = `mailto:${encodeURIComponent(destEmail)}?${ccEmail ? `cc=${encodeURIComponent(ccEmail)}&` : ''}subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    window.location.href = mailtoUrl;
   };
 
   return (
@@ -676,9 +745,21 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white">
           <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-primary bg-primary/10 px-2.5 py-1 rounded-md w-fit mb-1">
-              <FileText size={14} />
-              RAE: {project.codigo_rae || 'Não informado'}
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-primary bg-primary/10 px-2.5 py-1 rounded-md w-fit">
+                <FileText size={14} />
+                RAE: {project.codigo_rae || 'Não informado'}
+              </div>
+              {isSebraeSpProject(formData) && (
+                <span className="text-[11px] font-bold bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-1 rounded-md">
+                  SEBRAE-SP {resolvedErName ? `• ${resolvedErName}` : ''}
+                </span>
+              )}
+              {resolvedErEmail && (
+                <span className="text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-1 rounded-md">
+                  📩 {resolvedErEmail}
+                </span>
+              )}
             </div>
             <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
               {formData.nome_cliente || formData.razao_social || project.nome_cliente || 'Cliente Sem Nome'}
@@ -777,31 +858,50 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
               <InputField 
-                label="Código RAE / CO / OS nº" 
+                label="Código RAE" 
                 value={formData.codigo_rae} 
                 onChange={(v) => handleChange('codigo_rae', v)} 
+              />
+              <InputField 
+                label="Nº da Ordem de Serviço (OS)" 
+                value={formData.dados_extra?.os_number || ''} 
+                onChange={(v) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    dados_extra: { ...(prev.dados_extra || {}), os_number: v },
+                  }))
+                }
+                placeholder="Ex: 091108/2026"
+              />
+              <InputField 
+                label="Código SGF" 
+                value={formData.dados_extra?.sgf || formData.dados_extra?.codigo_sgf || formData.contrato_no || ''} 
+                onChange={(v) => {
+                  handleChange('contrato_no', v);
+                  setFormData((prev) => ({
+                    ...prev,
+                    contrato_no: v,
+                    dados_extra: { ...(prev.dados_extra || {}), sgf: v, codigo_sgf: v },
+                  }));
+                }}
+                placeholder="Ex: SP0920261108"
               />
               <InputField 
                 label="Valor da OS (R$)" 
                 type="text"
                 value={formData.valor_consultoria != null ? (typeof formData.valor_consultoria === 'number' ? (Number.isInteger(formData.valor_consultoria) ? formData.valor_consultoria : Number(formData.valor_consultoria).toFixed(2)) : formData.valor_consultoria) : ''} 
                 onChange={(v) => handleChange('valor_consultoria', v)} 
-                placeholder="Ex: 1301.14 ou 1188.00"
+                placeholder="Ex: 170.00 ou 1224.00"
               />
               <InputField 
-                label="Data do Atendimento / Início" 
+                label="Data do Atendimento / Execução" 
                 type="text"
                 value={formData.data_atendimento || formData.data_prevista_inicio || ''} 
                 onChange={(v) => {
                   handleChange('data_atendimento', v);
                   handleChange('data_prevista_inicio', v);
                 }} 
-                placeholder="Ex: 10/08/2026"
-              />
-              <InputField 
-                label="Programa / Produto Aplicado" 
-                value={formData.programa} 
-                onChange={(v) => handleChange('programa', v)} 
+                placeholder="Ex: 01/10/2026"
               />
               <InputField 
                 label="(Remoto/Presencial)" 
@@ -809,23 +909,96 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                 onChange={(v) => handleChange('modalidade', v)} 
               />
               <InputField 
-                label="Horas Contratadas" 
+                label="Carga Horária (Horas Contratadas)" 
                 type="text"
                 value={formData.horas_contratadas ?? ''} 
                 onChange={(v) => handleChange('horas_contratadas', v)} 
-                placeholder="Ex: 6.5 ou 6,5"
+                placeholder="Ex: 1 ou 4"
               />
               <InputField 
                 label="Horas Realizadas" 
                 type="text"
                 value={formData.horas_realizadas ?? ''} 
                 onChange={(v) => handleChange('horas_realizadas', v)} 
-                placeholder="Ex: 6.5 ou 6,5"
+                placeholder="Ex: 1 ou 4"
+              />
+              <InputField 
+                label="Programa / SGF" 
+                value={formData.programa} 
+                onChange={(v) => handleChange('programa', v)} 
               />
             </div>
 
+            {/* Bloco Unidade Demandante (ER SEBRAE-SP) & Cruzamento Automático de E-mail Credenciado */}
+            <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs font-extrabold text-blue-950 uppercase tracking-wider flex items-center gap-1.5">
+                  <Mail size={15} className="text-blue-700" />
+                  <span>Unidade Demandante (SEBRAE-SP) & E-mail Credenciado para Envio</span>
+                </span>
+                {resolvedErEmail && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(resolvedErEmail);
+                      setErEmailCopied(true);
+                      setTimeout(() => setErEmailCopied(false), 2500);
+                    }}
+                    className="inline-flex items-center gap-1 bg-blue-700 hover:bg-blue-800 text-white text-[11px] font-bold px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                  >
+                    {erEmailCopied ? <Check size={12} /> : <Clipboard size={12} />}
+                    <span>{erEmailCopied ? 'E-mail Copiado!' : 'Copiar E-mail ER'}</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Unidade Demandante (ER)
+                  </label>
+                  <select
+                    value={resolvedErName}
+                    onChange={(e) => handleUnidadeDemandanteChange(e.target.value)}
+                    className="w-full bg-white border border-blue-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-bold focus:outline-none focus:border-blue-600"
+                  >
+                    <option value="">Selecione a ER (São Paulo)...</option>
+                    {SEBRAE_SP_ER_CREDENCIADOS.map((item) => (
+                      <option key={item.er} value={item.er}>
+                        {item.er}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Gestor do Credenciamento (ER)
+                  </label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={resolvedErGestor || 'Selecione a Unidade Demandante'}
+                    className="w-full bg-slate-100 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 font-semibold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    E-mail Responsável (Envio NF/Relatório)
+                  </label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={resolvedErEmail || 'Selecione a Unidade Demandante'}
+                    className="w-full bg-emerald-50 border border-emerald-300 rounded-lg px-2.5 py-1.5 text-xs text-emerald-900 font-bold"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Objeto / Solução Contratada</label>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Produto Aplicado / Solução Contratada</label>
               <input 
                 type="text"
                 className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-primary transition-all"
@@ -1326,29 +1499,93 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
               </label>
             </div>
 
-            {/* Upload Nota Fiscal */}
-            <div className="p-3.5 bg-white rounded-xl border border-slate-200 flex items-center justify-between gap-3">
-              <div>
-                <span className="text-xs font-bold text-slate-800 block">4. Nota Fiscal da Consultoria:</span>
-                <span className="text-[11px] text-slate-500">
-                  {formData.dados_extra?.nota_fiscal_nome || 'Nenhuma Nota Fiscal anexada'}
-                </span>
+            {/* 4. Nota Fiscal (NF) — Estrutura Oficial SOMA SEBRAE & Upload */}
+            <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <span className="text-xs font-extrabold text-slate-900 block">
+                    4. Nota Fiscal (NF) — Discriminação Oficial SOMA SEBRAE:
+                  </span>
+                  <span className="text-[11px] text-slate-500">
+                    {formData.dados_extra?.nota_fiscal_nome
+                      ? `✅ Arquivo anexado: ${formData.dados_extra.nota_fiscal_nome}`
+                      : 'Copie o texto padrão abaixo (item 1.1 do Manual) para emitir a NF e anexe o PDF.'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(generatedNfDiscriminacao);
+                      setNfTextCopied(true);
+                      setTimeout(() => setNfTextCopied(false), 2500);
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors flex items-center gap-1.5 shadow-2xs"
+                    title="Copia a discriminação completa exigida pelo SEBRAE-SP"
+                  >
+                    {nfTextCopied ? <Check size={13} /> : <Clipboard size={13} />}
+                    <span>{nfTextCopied ? 'Discriminação Copiada!' : 'Copiar Discriminação da NF'}</span>
+                  </button>
+
+                  <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors shrink-0">
+                    <span>Anexar NF</span>
+                    <input type="file" accept=".pdf,image/*" onChange={handleNfUpload} className="hidden" />
+                  </label>
+                </div>
               </div>
-              <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-colors shrink-0">
-                <span>Anexar NF</span>
-                <input type="file" accept=".pdf,image/*" onChange={handleNfUpload} className="hidden" />
-              </label>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between text-[10px] text-slate-500 font-semibold">
+                  <span>Tomador SEBRAE-SP: <strong>43.728.245/0001-42</strong> • Cód. Serviço Outros Municípios: <strong>17.01 (Consultoria)</strong></span>
+                  <span>Valor Total: <strong className="text-emerald-700">R$ {Number(formData.valor_consultoria || 170).toFixed(2).replace('.', ',')}</strong></span>
+                </div>
+                <textarea
+                  readOnly
+                  rows={8}
+                  value={generatedNfDiscriminacao}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 font-mono text-[11px] text-slate-800 leading-snug focus:outline-none select-all"
+                />
+              </div>
             </div>
 
-            {/* Finalizar e enviar ao SEBRAE */}
-            <div className="pt-2">
+            {/* Finalizar e enviar ao SEBRAE (Cruzado com o E-mail Credenciado da ER) */}
+            <div className="pt-2 space-y-2">
+              {resolvedErEmail && (
+                <div className="bg-blue-950 text-white rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <span className="text-[10px] uppercase tracking-wider text-blue-300 font-bold block">
+                      Destinatário Credenciado ({resolvedErName}):
+                    </span>
+                    <span className="font-extrabold text-emerald-300 truncate block">
+                      {resolvedErEmail} {resolvedErGestor ? `• ${resolvedErGestor}` : ''}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(resolvedErEmail);
+                      setErEmailCopied(true);
+                      setTimeout(() => setErEmailCopied(false), 2500);
+                    }}
+                    className="bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold px-2.5 py-1 rounded-lg shrink-0 cursor-pointer flex items-center gap-1"
+                  >
+                    {erEmailCopied ? <Check size={12} /> : <Clipboard size={12} />}
+                    <span>{erEmailCopied ? 'Copiado' : 'Copiar'}</span>
+                  </button>
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={handleSendToSebrae}
-                className="w-full bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
+                className="w-full bg-gradient-to-r from-purple-700 to-indigo-700 hover:from-purple-600 hover:to-indigo-600 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Send size={16} />
-                <span>Encaminhar Pacote SOMA Completo ao SEBRAE</span>
+                <span>
+                  {resolvedErEmail
+                    ? `Encaminhar Pacote SOMA para ${resolvedErName} (${resolvedErEmail})`
+                    : 'Encaminhar Pacote SOMA Completo ao SEBRAE'}
+                </span>
               </button>
             </div>
           </section>

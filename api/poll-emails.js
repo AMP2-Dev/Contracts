@@ -230,9 +230,20 @@ export default async function handler(req, res) {
                 if (pdfText) {
                   const osMatch = pdfText.match(/(?:N[º°]?\s*ORDEM\s*SERVIÇO|Ordem\s*de\s*Serviço\s*n[º°]?)\s*[:\s]*([0-9\/\-]+)/i);
                   const sgfMatch = pdfText.match(/CÓDIGO\s*SGF\s*[:\s]*([A-Z0-9]+)/i);
-                  const gestorMatch = pdfText.match(/GESTOR\s*RESPONSÁVEL\s*[:\s]*([A-Z\s]+?)(?=\s*E-MAIL|\s*CÓDIGO|$)/i);
+                  const unidadeMatch = pdfText.match(/UNIDADE\s*DEMANDANTE\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ0-9\s\-]+?)(?=\s*GESTOR\s*RESPONSÁVEL|\s*CÓDIGO\s*SGF|\s*E-MAIL|$)/i);
+                  const unidadeDemandante = unidadeMatch ? unidadeMatch[1].trim().replace(/\s+/g, ' ') : null;
+                  const gestorMatch = pdfText.match(/GESTOR\s*RESPONSÁVEL\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s]+?)(?=\s*E-MAIL|\s*CÓDIGO|$)/i);
                   const emailGestorMatch = pdfText.match(/E-MAIL\s*[:\s]*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
                   const produtoMatch = pdfText.match(/PRODUTO\s*APLICADO\s*[:\s]*([^]+?)(?=\s*OBJETO|\s*DADOS DO|$)/i);
+                  const cargaMatch =
+                    pdfText.match(/CARGA\s*HORÁRIA\s*[:\s]*([0-9]+(?:[.,][0-9]+)?)/i) ||
+                    pdfText.match(/NATUREZA\s*[:\s]*[^\d]*([0-9]+(?:[.,][0-9]+)?)\s*hora/i);
+                  const horasContratadas = cargaMatch ? parseFloat(cargaMatch[1].replace(',', '.')) || 1 : 1;
+
+                  const editalMatch = pdfText.match(/Edital\s*(?:n[º°]?\s*)?([0-9]{3}\/[0-9]{4})/i);
+                  const edital = editalMatch ? editalMatch[1].trim() : '004/2026';
+                  const processoMatch = pdfText.match(/Processo\s*(?:n[º°]?\s*)?([0-9]+\/[0-9]{4})/i);
+                  const processoNo = processoMatch ? processoMatch[1].trim() : '1777/2025';
                   
                   const raeMatch = pdfText.match(/RAE\s*[:\s]*([0-9]+)/i);
                   const clienteMatch = pdfText.match(/CLIENTE\s*[:\s]*([A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\-]+?)(?=\s*CONTATO|\s*E-MAIL|\s*VIGÊNCIA|$)/i);
@@ -256,7 +267,58 @@ export default async function handler(req, res) {
                   const plataformaUtilizada = isPresencial ? 'Presencial' : 'Plataforma Microsoft Teams';
                   const profissionalResponsavel = representanteMatch ? representanteMatch[1].trim() : 'MARCO ANTONIO PAVANI';
                   const empresaCredenciada = fornecedorMatch ? fornecedorMatch[1].trim().replace(/\s+/g, ' ') : 'AMP DO BRASIL SOLUCOES ADMINISTRATIVAS E TECNOLOGICAS LTDA';
-                  const natureza = (naturezaMatch && /consultoria/i.test(naturezaMatch[1])) ? 'CONSULTORIA' : 'CONSULTORIA';
+                  const natureza = (naturezaMatch && /instrutoria/i.test(naturezaMatch[1])) ? 'INSTRUTORIA' : 'CONSULTORIA';
+
+                  // Tabela oficial de ERs Credenciados SEBRAE-SP
+                  const TABELA_ER_SP = [
+                    { er: 'ER Campinas', gestor: 'EDUARDO DA COSTA SENE NETO', email: 'credenciamento.er.cp@sebraesp.com.br' },
+                    { er: 'Desenvolvimento de Solucoes', gestor: 'Fatima de Oliveira', email: 'credenciamento.ugstd@sebraesp.com.br' },
+                    { er: 'ER Alto Tietê', gestor: 'CRISTIANE BENTO DE SOUZA', email: 'credencimento.er.at@sebraesp.com.br' },
+                    { er: 'ER Araçatuba', gestor: 'DAIANA KODAMA FERREIRA BERTACHINI', email: 'credenciamento.er.artb@sebraesp.com.br' },
+                    { er: 'ER Araraquara', gestor: 'Marjorie Ambo Koto', email: 'credenciamento.er.arr@sebraesp.com.br' },
+                    { er: 'ER Baixada Santista', gestor: 'ADRIANA PAULA MORAES RAMIRES RAMOS', email: 'credenciamento.er.bs@sebraesp.com.br' },
+                    { er: 'ER BARRETOS', gestor: 'JOYCE COSTA HENRIQUE', email: 'credenciamento.er.brt@sebraesp.com.br' },
+                    { er: 'ER Bauru', gestor: 'ANA AMELIA CORREA PRECIOSO', email: 'credenciamento.er.br@sebraesp.com.br' },
+                    { er: 'ER BOTUCATU', gestor: 'FLAVIO SILVA DE OLIVEIRA', email: 'credenciamento.er.btt@sebraesp.com.br' },
+                    { er: 'ER Capital Centro', gestor: 'Eurides Maria Ramalho Alves', email: 'credenciamento.er.cc@sebraesp.com.br' },
+                    { er: 'ER Capital Leste I', gestor: 'DAIANNA COSTA FLORES BELO', email: 'credenciamento.er.cl1@sebraesp.com.br' },
+                    { er: 'ER Capital Leste II', gestor: 'LUCIA AMELIA GOMES', email: 'credenciamento.er.cl2@sebraesp.com.br' },
+                    { er: 'ER Capital Norte', gestor: 'SIMONE PERES ZAGATI', email: 'credenciamento.er.cn@sebraesp.com.br' },
+                    { er: 'ER Capital Oeste', gestor: 'Taissa Telles de Abreu Lourenço', email: 'credenciamento.er.co@sebraesp.com.br' },
+                    { er: 'ER Capital Sul', gestor: 'WILSON BORGES DE CARVALHO JUNIOR', email: 'credenciamento.er.cs@sebraesp.com.br' },
+                    { er: 'ER Franca', gestor: 'PRISCILA PEREIRA BATISTA TOLOI', email: 'credenciamento.er.fr@sebraesp.com.br' },
+                    { er: 'ER Grande ABC', gestor: 'DHIEGO GARCIA OLIVEIRA', email: 'credenciamento.er.abc@sebraesp.com.br' },
+                    { er: 'ER Guaratinguetá', gestor: 'MARCELA DE BARROS LEITE VILELA', email: 'credenciamento.er.gra@sebraesp.com.br' },
+                    { er: 'ER Guarulhos', gestor: 'JOSE LEANDRO DE SOUZA', email: 'credenciamento.er.gru@sebraesp.com.br' },
+                    { er: 'ER Jundiaí', gestor: 'SILVIA DELLA MATRICE', email: 'credenciamento.er.jd@sebraesp.com.br' },
+                    { er: 'ER Marília', gestor: 'SIDNEY GUERMANDI RAMALHO', email: 'credenciamento.er.mr@sebraesp.com.br' },
+                    { er: 'ER Osasco', gestor: 'FERNANDO CORREA QUEIROZ', email: 'credenciamento.er.os@sebraesp.com.br' },
+                    { er: 'ER Ourinhos', gestor: 'CAMILA DA SILVA MARQUES', email: 'credenciamento.er.or@sebraesp.com.br' },
+                    { er: 'ER Piracicaba', gestor: 'ALAN ADILSON TANNO', email: 'credenciamento.er.prb@sebraesp.com.br' },
+                    { er: 'ER Presidente Prudente', gestor: 'VERONICA FRANCIANE DORIA', email: 'credenciamento.er.pr@sebraesp.com.br' },
+                    { er: 'ER Ribeirão Preto', gestor: 'Lederson Schwab Morais', email: 'credenciamento.er.rp@sebraesp.com.br' },
+                    { er: 'ER São Carlos', gestor: 'DIEGO PEREIRA DE SOUZA', email: 'credenciamento.er.sc@sebraesp.com.br' },
+                    { er: 'ER São João da Boa Vista', gestor: 'Raphael De Padua Medeiros', email: 'credenciamento.er.sjbv@sebraesp.com.br' },
+                    { er: 'ER São José do Rio Preto', gestor: 'RICARDO LUCIANO PIOVESAN', email: 'credenciamento.er.sjrp@sebraesp.com.br' },
+                    { er: 'ER São José dos Campos', gestor: 'Yuri Solano Sirobaba', email: 'credenciamento.er.sjc@sebraesp.com.br' },
+                    { er: 'ER Sorocaba', gestor: 'SANDRO LUIS RESSIO', email: 'credenciamento.er.srb@sebraesp.com.br' },
+                    { er: 'ER Sudoeste Paulista', gestor: 'ADRIANO AUGUSTO DE SOUZA', email: 'credenciamento.er.sdp@sebraesp.com.br' },
+                    { er: 'ER Vale do Ribeira', gestor: 'ANDRE LUIZ DE ALMEIDA VITOR', email: 'credenciamento.er.vr@sebraesp.com.br' },
+                    { er: 'ER Votuporanga', gestor: 'FRANCISCO EMIDIO NEGRINE DE SOUZA MARQUES', email: 'credenciamento.er.vot@sebraesp.com.br' },
+                    { er: 'Rede Sebrae de Atendimento', gestor: 'SILA MELO DE CHIARA', email: 'credenciamento.uac@sebraesp.com.br' },
+                    { er: 'UAMSF', gestor: '', email: 'credenciamento.uamsf@sebraesp.com.br' },
+                    { er: 'UECS', gestor: 'MARCUS VINICIUS', email: 'credenciamento.uecs@sebraesp.com.br' },
+                    { er: 'UPPRG', gestor: 'EDILNE ALVES', email: 'credenciamento.upprg@sebraesp.com.br' },
+                  ];
+
+                  const normText = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+                  const erEncontrada = unidadeDemandante
+                    ? TABELA_ER_SP.find((item) => {
+                        const nEr = normText(item.er);
+                        const nUnid = normText(unidadeDemandante);
+                        return nUnid === nEr || nUnid.includes(nEr) || nEr.includes(nUnid);
+                      })
+                    : null;
 
                   let rawContato = contatoMatch ? contatoMatch[1].trim() : '';
                   let formattedContato = rawContato;
@@ -274,20 +336,58 @@ export default async function handler(req, res) {
 
                   const clienteNome = clienteMatch ? clienteMatch[1].trim() : null;
                   const empresaNome = empresaFullMatch ? empresaFullMatch[0].replace(/^EMPRESA\s*[:\s]*/i, '').replace(/\s+/g, ' ').trim() : (clienteNome || 'Empresa MEI');
+                  const produtoLimpo = produtoMatch
+                    ? produtoMatch[1].trim().replace(/\s+/g, ' ').replace(/\s*\(presencial\/remoto\/na.*$/i, '').trim()
+                    : 'Faça a gestão financeira e tenha controle do seu dinheiro';
+
+                  const sgfVal = sgfMatch ? sgfMatch[1].trim() : null;
+                  const osVal = osMatch ? osMatch[1].trim() : null;
+                  const raeVal = raeMatch ? raeMatch[1].trim() : null;
+                  const dataExecVal = dataPrevistaMatch ? dataPrevistaMatch[1].trim() : new Date().toLocaleDateString('pt-BR');
+                  const horasLabel = horasContratadas === 1 ? '1 hora' : `${String(horasContratadas).replace('.', ',')} horas`;
+                  const naturezaLabel = natureza === 'INSTRUTORIA' ? 'Instrutoria' : 'Consultoria';
+
+                  const nfDiscriminacao = [
+                    `Edital ${edital}`,
+                    `Processo ${processoNo}`,
+                    `SGF nº. ${sgfVal || ''}`,
+                    `RAE: ${raeVal || ''}`,
+                    `OS:${osVal || ''}`,
+                    `Profissional Responsável: ${profissionalResponsavel}`,
+                    `Quantidade de Horas: ${horasLabel}`,
+                    `Natureza: ${naturezaLabel}`,
+                    `Produto: ${produtoLimpo}`,
+                    `Data da execução: ${dataExecVal}`,
+                    `Local (Cidade) da Prestação de Serviço : São Paulo`,
+                    `Nome/Razão Social do Cliente : ${clienteNome || empresaNome}`,
+                    `CPF/CNPJ: ${rawCnpj || ''}`,
+                    `Dados Bancários da Empresa`,
+                    `DADOS BANCÁRIOS:`,
+                    `BCO: 756 - SICOOB`,
+                    `AG: 3194`,
+                    `CC: 9747187-9`
+                  ].join('\n');
 
                   parsedPdfData = {
-                    osNumber: osMatch ? osMatch[1].trim() : null,
-                    sgf: sgfMatch ? sgfMatch[1].trim() : null,
-                    contratoNo: sgfMatch ? sgfMatch[1].trim() : (osMatch ? osMatch[1].trim() : null),
+                    osNumber: osVal,
+                    sgf: sgfVal,
+                    contratoNo: sgfVal || osVal,
+                    edital,
+                    processoNo,
+                    unidadeDemandante,
+                    erCredenciado: erEncontrada?.er || unidadeDemandante || null,
+                    gestorErCredenciado: erEncontrada?.gestor || null,
+                    emailErCredenciado: erEncontrada?.email || null,
                     gestor: gestorMatch ? gestorMatch[1].trim() : null,
                     emailGestor: emailGestorMatch ? emailGestorMatch[1].trim() : null,
-                    produto: produtoMatch ? produtoMatch[1].trim().replace(/\s+/g, ' ') : null,
-                    rae: raeMatch ? raeMatch[1].trim() : null,
+                    produto: produtoLimpo,
+                    rae: raeVal,
                     clienteNome: clienteNome,
                     empresa: empresaNome,
                     cnpj: rawCnpj,
                     contato: formattedContato || null,
                     emailCliente: emailCliente || null,
+                    horasContratadas,
                     valor: valorMatch ? parseFloat(valorMatch[1].replace('.', '').replace(',', '.')) : 170.0,
                     dataPrevista: dataPrevistaMatch ? dataPrevistaMatch[1].trim() : null,
                     prefObs: prefObs,
@@ -295,9 +395,10 @@ export default async function handler(req, res) {
                     plataformaUtilizada,
                     natureza,
                     empresaCredenciada,
-                    modalidade: isPresencial ? 'Presencial' : 'À Distância (Online)'
+                    modalidade: isPresencial ? 'Presencial' : 'À Distância (Online)',
+                    nfDiscriminacao
                   };
-                  console.log(`[POLL] 📄 PDF analisado com sucesso! Cliente: ${parsedPdfData.clienteNome}, RAE: ${parsedPdfData.rae}`);
+                  console.log(`[POLL] 📄 PDF analisado com sucesso! Cliente: ${parsedPdfData.clienteNome}, RAE: ${parsedPdfData.rae}, ER: ${parsedPdfData.erCredenciado} (${parsedPdfData.emailErCredenciado})`);
                 }
               } catch (pdfErr) {
                 console.error('[POLL] Erro ao extrair texto do PDF:', pdfErr);
@@ -375,27 +476,38 @@ export default async function handler(req, res) {
                 telefone: parsedPdfData?.contato || null,
                 celular: parsedPdfData?.contato || null,
                 email_cliente: parsedPdfData?.emailCliente || null,
+                municipio: 'São Paulo',
+                estado: 'SP',
                 status: 'novo_contrato',
                 solucao_contratada: parsedPdfData?.produto || 'Consultoria Sebrae Capturada por E-mail',
-                programa: 'Consultoria Sebrae',
+                programa: parsedPdfData?.sgf ? `${parsedPdfData.sgf} SGF 2026` : 'Consultoria Sebrae',
                 modalidade: parsedPdfData?.modalidade || 'À Distância (Online)',
-                horas_contratadas: 1,
-                horas_realizadas: 0,
+                horas_contratadas: parsedPdfData?.horasContratadas || 1,
+                horas_realizadas: parsedPdfData?.horasContratadas || 1,
                 valor_consultoria: parsedPdfData?.valor || 170.00,
+                data_atendimento: parsedPdfData?.dataPrevista || null,
                 data_prevista_inicio: parsedPdfData?.dataPrevista || null,
                 data_prevista_fim: parsedPdfData?.dataPrevista || null,
+                edital: parsedPdfData?.edital || '004/2026',
+                processo_no: parsedPdfData?.processoNo || '1777/2025',
                 contrato_no: parsedPdfData?.contratoNo || parsedPdfData?.sgf || null,
                 empresa_credenciada: parsedPdfData?.empresaCredenciada || 'AMP DO BRASIL SOLUCOES ADMINISTRATIVAS E TECNOLOGICAS LTDA',
                 profissional_responsavel: parsedPdfData?.profissionalResponsavel || 'MARCO ANTONIO PAVANI',
                 natureza: parsedPdfData?.natureza || 'CONSULTORIA',
                 plataforma_utilizada: parsedPdfData?.plataformaUtilizada || 'Plataforma Microsoft Teams',
-                observacoes: parsedPdfData?.prefObs ? `OS nº ${parsedPdfData.osNumber || ''} | ${parsedPdfData.prefObs} | Gestor: ${parsedPdfData.gestor || 'Sebrae'}` : `Capturado automaticamente do e-mail de ${remetente}. Assunto: ${assunto}`,
+                observacoes: `OS nº ${parsedPdfData?.osNumber || ''} | Unidade: ${parsedPdfData?.unidadeDemandante || 'SP'} -> E-mail Credenciado: ${parsedPdfData?.emailErCredenciado || 'N/A'} (${parsedPdfData?.gestorErCredenciado || ''}) | ${parsedPdfData?.prefObs || ''} | Gestor OS: ${parsedPdfData?.gestor || 'Sebrae'} (${parsedPdfData?.emailGestor || ''})`,
                 objetivo_atendimento: parsedPdfData?.prefObs ? `Consultoria Sebrae - ${parsedPdfData.prefObs}` : null,
                 dados_extra: {
                   os_number: parsedPdfData?.osNumber || null,
                   sgf: parsedPdfData?.sgf || null,
+                  codigo_sgf: parsedPdfData?.sgf || null,
+                  unidade_demandante: parsedPdfData?.unidadeDemandante || null,
+                  er_credenciado: parsedPdfData?.erCredenciado || null,
+                  gestor_er_credenciado: parsedPdfData?.gestorErCredenciado || null,
+                  email_er_credenciado: parsedPdfData?.emailErCredenciado || null,
                   gestor: parsedPdfData?.gestor || null,
                   email_gestor: parsedPdfData?.emailGestor || null,
+                  nf_discriminacao: parsedPdfData?.nfDiscriminacao || null,
                   anexo_pdf: anexoNome
                 },
                 atualizado_em: new Date().toISOString()

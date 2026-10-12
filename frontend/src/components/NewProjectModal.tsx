@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, Plus, FileText, Building2, User, Clock, Layers, Users, Sparkles, DollarSign, Calendar } from 'lucide-react';
+import { X, Plus, FileText, Building2, User, Clock, Layers, Users, Sparkles, DollarSign, Calendar, Mail } from 'lucide-react';
 import type { Project, ProjectStatus } from '../types/database';
 import { maskPhone, formatCurrency } from '../lib/utils';
+import { SEBRAE_SP_ER_CREDENCIADOS, findSebraeSpErCredenciado, buildSebraeSpNfDiscriminacao } from '../lib/sebraeSpUtils';
 
 interface EmpresaItemPrevia {
   codigoRae: string;
@@ -19,6 +20,8 @@ interface NewProjectModalProps {
 export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalProps) {
   // 1. DADOS DO CONTRATO (GUARDA-CHUVA)
   const [contratoNo, setContratoNo] = useState('');
+  const [osNumber, setOsNumber] = useState('');
+  const [unidadeDemandante, setUnidadeDemandante] = useState('');
   const [qtdEmpresas, setQtdEmpresas] = useState(''); // Deve vir em branco
   const [edital, setEdital] = useState('');
   const [processoNo, setProcessoNo] = useState('');
@@ -36,8 +39,8 @@ export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalPr
   const [valorTotalManual, setValorTotalManual] = useState('');
 
   // Estado e Município padrão do contrato
-  const [estado, setEstado] = useState('RJ');
-  const [municipio, setMunicipio] = useState('Rio de Janeiro');
+  const [estado, setEstado] = useState('SP');
+  const [municipio, setMunicipio] = useState('São Paulo');
 
   // Empresa Credenciada e Responsável
   const [empresaCredenciada, setEmpresaCredenciada] = useState('AMP DO BRASIL SOLUCOES ADMINISTRATIVAS E TECNOLOGICAS LTDA');
@@ -55,9 +58,11 @@ export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalPr
 
   const resetForm = () => {
     setContratoNo('');
+    setOsNumber('');
+    setUnidadeDemandante('');
     setQtdEmpresas('');
-    setEdital('');
-    setProcessoNo('');
+    setEdital('004/2026');
+    setProcessoNo('1777/2025');
     setPrograma('Consultoria Sebrae');
     setModalidade('Remoto');
     setDataAtendimento('');
@@ -68,8 +73,8 @@ export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalPr
     setRatearRelatorio(true);
     setValorUnitarioManual('');
     setValorTotalManual('');
-    setEstado('RJ');
-    setMunicipio('Rio de Janeiro');
+    setEstado('SP');
+    setMunicipio('São Paulo');
 
     setCodigoRaeSingle('');
     setNomeClienteSingle('');
@@ -155,6 +160,8 @@ export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalPr
 
   if (!isOpen) return null;
 
+  const matchedErModal = findSebraeSpErCredenciado(unidadeDemandante, municipio);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -167,27 +174,37 @@ export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalPr
       status: 'novo_contrato' as ProjectStatus,
       cpf: null,
       municipio: municipio.trim() || (estado === 'RJ' ? 'Rio de Janeiro' : 'São Paulo'),
-      estado: estado.trim() || 'RJ',
+      estado: estado.trim() || 'SP',
       endereco: '',
       programa: programa.trim() || 'Consultoria Sebrae',
-      solucao_contratada: 'Consultoria de Gestão e Processos',
+      solucao_contratada: 'Faça a gestão financeira e tenha controle do seu dinheiro',
       objetivo_atendimento: 'Atendimento e consultoria Sebrae agendados.',
-      horas_contratadas: parsedHoras || 4,
-      horas_realizadas: 0,
+      horas_contratadas: parsedHoras || 1,
+      horas_realizadas: parsedHoras || 1,
       data_atendimento: dataAtendimento.trim() || null,
       data_prevista_inicio: dataAtendimento.trim() || new Date().toISOString().split('T')[0],
       data_prevista_fim: null,
       modalidade: modalidade,
-      valor_consultoria: valorUnitario,
+      valor_consultoria: valorUnitario || 170,
       contrato_no: contratoNo.trim() || null,
-      edital: edital.trim() || null,
-      processo_no: processoNo.trim() || null,
+      edital: edital.trim() || '004/2026',
+      processo_no: processoNo.trim() || '1777/2025',
       empresa_credenciada: empresaCredenciada.trim() || 'AMP DO BRASIL SOLUCOES ADMINISTRATIVAS E TECNOLOGICAS LTDA',
       profissional_responsavel: profissionalResponsavel.trim() || 'MARCO ANTONIO PAVANI',
       natureza: 'CONSULTORIA',
       plataforma_utilizada: modalidade,
-      observacoes: count > 1 ? `Contrato Guarda-Chuva (${count} empresas no total)` : 'Demanda cadastrada pelo sistema.',
-      dados_extra: {},
+      observacoes: matchedErModal
+        ? `Unidade: ${matchedErModal.er} | E-mail Credenciado: ${matchedErModal.email} (${matchedErModal.gestor})`
+        : (count > 1 ? `Contrato Guarda-Chuva (${count} empresas no total)` : 'Demanda cadastrada pelo sistema.'),
+      dados_extra: {
+        os_number: osNumber.trim() || null,
+        sgf: contratoNo.trim() || null,
+        codigo_sgf: contratoNo.trim() || null,
+        unidade_demandante: matchedErModal?.er || unidadeDemandante || null,
+        er_credenciado: matchedErModal?.er || unidadeDemandante || null,
+        gestor_er_credenciado: matchedErModal?.gestor || null,
+        email_er_credenciado: matchedErModal?.email || null,
+      },
       criado_em: new Date().toISOString(),
       atualizado_em: new Date().toISOString(),
     };
@@ -558,7 +575,7 @@ export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalPr
               )}
             </div>
 
-            {/* Localização Padrão */}
+            {/* Localização Padrão & Unidade Demandante SEBRAE-SP */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Município do Contrato</label>
@@ -566,7 +583,7 @@ export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalPr
                   type="text"
                   value={municipio}
                   onChange={(e) => setMunicipio(e.target.value)}
-                  placeholder="Rio de Janeiro"
+                  placeholder="São Paulo"
                   className="w-full bg-white border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-800 focus:outline-none focus:border-primary"
                 />
               </div>
@@ -577,8 +594,8 @@ export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalPr
                   onChange={(e) => setEstado(e.target.value)}
                   className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 font-bold focus:outline-none focus:border-primary"
                 >
-                  <option value="RJ">RJ - Rio de Janeiro</option>
                   <option value="SP">SP - São Paulo</option>
+                  <option value="RJ">RJ - Rio de Janeiro</option>
                   <option value="MG">MG - Minas Gerais</option>
                   <option value="ES">ES - Espírito Santo</option>
                   <option value="PR">PR - Paraná</option>
@@ -588,6 +605,53 @@ export function NewProjectModal({ isOpen, onClose, onCreate }: NewProjectModalPr
                 </select>
               </div>
             </div>
+
+            {estado === 'SP' && (
+              <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-3 space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-blue-950 mb-1">
+                      Unidade Demandante (ER SP)
+                    </label>
+                    <select
+                      value={unidadeDemandante}
+                      onChange={(e) => setUnidadeDemandante(e.target.value)}
+                      className="w-full bg-white border border-blue-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-bold focus:outline-none focus:border-blue-600"
+                    >
+                      <option value="">Selecione a ER...</option>
+                      {SEBRAE_SP_ER_CREDENCIADOS.map((item) => (
+                        <option key={item.er} value={item.er}>
+                          {item.er}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Nº da OS (Ex: 091108/2026)
+                    </label>
+                    <input
+                      type="text"
+                      value={osNumber}
+                      onChange={(e) => setOsNumber(e.target.value)}
+                      placeholder="Ex: 091108/2026"
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-semibold focus:outline-none focus:border-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      E-mail Credenciado (Automático)
+                    </label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={matchedErModal?.email || 'Selecione a ER ao lado'}
+                      className="w-full bg-emerald-50 border border-emerald-300 rounded-lg px-2.5 py-1.5 text-xs text-emerald-900 font-bold"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* SEÇÃO 2: A GRANDE SACADA - CARDS GERADOS AUTOMATICAMENTE */}
