@@ -6,15 +6,6 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Configura limite de payload maior para suportar 2 PDFs em Base64 (Relatório Assinado + Nota Fiscal)
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '25mb',
-    },
-  },
-};
-
 function stripDataUrlPrefix(b64OrDataUrl = '') {
   const str = String(b64OrDataUrl || '').trim();
   const commaIdx = str.indexOf(',');

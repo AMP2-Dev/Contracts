@@ -243,10 +243,11 @@ export async function sendSomaPackageViaSmtp(
     attachments,
   };
 
-  // Tenta primeiro a API serverless local/Vercel (/api/send-soma-email) e tem fallback automático na VPS AMP
+  // Dispara prioritariamente pela API dedicada na VPS AMP (https://amp.ia.br/api/nfse/enviar-email)
+  // com suporte a 20MB de anexos PDF e fallback para /api/send-soma-email
   const endpoints = [
+    'https://amp.ia.br/api/nfse/enviar-email',
     '/api/send-soma-email',
-    'https://dre.amp.ia.br/api/nfse/enviar-email',
   ];
 
   let lastError = 'Falha ao comunicar com o servidor de disparo SMTP.';
