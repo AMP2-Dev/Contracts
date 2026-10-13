@@ -437,6 +437,11 @@ function deduplicateProjects(list: Project[], isFromDatabase: boolean = false): 
         continue;
       }
 
+      // Normaliza status enviado_sebrae para a coluna oficial 'pagamento_aguardando'
+      if ((item as any).status === 'enviado_sebrae') {
+        item.status = 'pagamento_aguardando';
+      }
+
       // Deduplica preservando as edições e o status real do usuário
       const key = itemId || itemRae || itemNome;
       if (key && !seen.has(key)) {

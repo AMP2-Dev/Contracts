@@ -780,7 +780,7 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
         const nowIso = new Date().toISOString();
         const updatedProject = {
           ...formData,
-          status: 'enviado_sebrae',
+          status: 'pagamento_aguardando',
           dados_extra: {
             ...(formData.dados_extra || {}),
             pacote_soma_enviado_em: nowIso,
