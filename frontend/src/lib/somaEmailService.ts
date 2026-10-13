@@ -199,6 +199,9 @@ export function buildSomaPackageEmailContent(
   return { subject, text, html };
 }
 
+const SUPABASE_EDGE_URL = 'https://eornunjxcmtyrdrihiqk.supabase.co';
+const SUPABASE_EDGE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVvcm51bmp4Y210eXJkcmloaXFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4Njg5NDYsImV4cCI6MjA5NzQ0NDk0Nn0.fGBiJI_Mx0qFd0lLhvC_FKDkH4To56FMFTvkhwKviV0';
+
 export async function sendSomaPackageViaSmtp(
   project: Partial<Project>,
   options: SendSomaPackageOptions
@@ -214,7 +217,7 @@ export async function sendSomaPackageViaSmtp(
 
   const attachments: SomaAttachment[] = [];
 
-  // 1. Relatório Técnico / Termo Assinado pelo Cliente (PDF)
+  // Anexo 1: Documento anexado em termo_assinado_b64
   if (extra.termo_assinado_b64) {
     attachments.push({
       filename: extra.termo_assinado_nome || `Relatorio_Assinado_OS_${osNum}_RAE_${raeNum}.pdf`,
@@ -223,7 +226,7 @@ export async function sendSomaPackageViaSmtp(
     });
   }
 
-  // 2. Nota Fiscal em PDF (DANFSe)
+  // Anexo 2: Documento anexado em nota_fiscal_b64
   if (extra.nota_fiscal_b64) {
     attachments.push({
       filename: extra.nota_fiscal_nome || `Nota_Fiscal_OS_${osNum}_RAE_${raeNum}.pdf`,
@@ -234,50 +237,53 @@ export async function sendSomaPackageViaSmtp(
 
   const finalCc = ensureConsultoriaCc(options.cc);
 
-  const payload = {
-    to: options.to.trim(),
-    cc: finalCc,
-    subject: options.customSubject || defaultSubject,
-    text: options.customBodyText || defaultText,
-    html,
-    attachments,
-  };
+  try {
+    const response = await fetch(`${SUPABASE_EDGE_URL}/functions/v1/enviar-email-smtp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_EDGE_KEY,
+        Authorization: `Bearer ${SUPABASE_EDGE_KEY}`,
+      },
+      body: JSON.stringify({
+        smtp: {
+          nomeRemetente: 'AMP DO BRASIL | MARCO ANTONIO PAVANI',
+          remetenteEmail: 'atendimento@amp.adm.br',
+        },
+        mensagem: {
+          destinatario: options.to.trim(),
+          copia: finalCc,
+          assunto: options.customSubject || defaultSubject,
+          corpo: options.customBodyText || defaultText,
+          corpoHtml: html,
+          anexos: attachments.map((att) => ({
+            filename: att.filename,
+            content: att.content,
+          })),
+        },
+      }),
+    });
 
-  // Dispara prioritariamente pela API dedicada na VPS AMP (https://amp.ia.br/api/nfse/enviar-email)
-  // com suporte a 20MB de anexos PDF e fallback para /api/send-soma-email
-  const endpoints = [
-    'https://amp.ia.br/api/nfse/enviar-email',
-    '/api/send-soma-email',
-  ];
+    const data = await response.json().catch(() => null);
 
-  let lastError = 'Falha ao comunicar com o servidor de disparo SMTP.';
-  for (const url of endpoints) {
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json().catch(() => null);
-      if (response.ok && data?.ok) {
-        return {
-          ok: true,
-          messageId: data.messageId,
-          to: data.to || payload.to,
-          cc: data.cc || payload.cc,
-          attachmentsCount: data.attachmentsCount ?? attachments.length,
-        };
-      }
-      if (data?.error) {
-        lastError = data.error;
-      }
-    } catch (err: any) {
-      lastError = err?.message || lastError;
+    if (response.ok && data?.sucesso) {
+      return {
+        ok: true,
+        messageId: data.messageId,
+        to: data.destinatario || options.to.trim(),
+        cc: data.copia || finalCc,
+        attachmentsCount: attachments.length,
+      };
     }
-  }
 
-  return {
-    ok: false,
-    error: lastError,
-  };
+    return {
+      ok: false,
+      error: data?.error || 'Erro ao processar o disparo do e-mail no servidor em nuvem.',
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: err?.message || 'Erro de conexão ao disparar e-mail.',
+    };
+  }
 }
