@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, FileText, Building2, User, Clock, CheckCircle2, MessageSquare, Mail, Camera, FileCheck, Send, Printer, Trash2, ExternalLink, FileSignature, Check, Calendar, Clipboard, AlertTriangle, RotateCcw, ShieldCheck, Shield } from 'lucide-react';
-import type { Project, CompanyConfig } from '../types/database';
+import { X, Save, FileText, Building2, User, Clock, CheckCircle2, MessageSquare, Mail, Camera, FileCheck, Send, Printer, Trash2, ExternalLink, FileSignature, Check, Calendar, Clipboard, AlertTriangle, RotateCcw, ShieldCheck, Shield, Paperclip, Plus, Eye, Download } from 'lucide-react';
+import type { Project, CompanyConfig, AnexoAdicional } from '../types/database';
 import { supabase } from '../lib/supabase';
 import { cn, maskPhone } from '../lib/utils';
 import { REPORT_ARROW_B64, REPORT_BANNER_B64, REPORT_LOGO_B64 } from '../assets/reportAssets';
+import {
+  DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_NOME,
+  DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_B64,
+} from '../assets/declaracaoSebraeSp';
 import { createAutentiqueDocument } from '../lib/autentique';
 import { SomaAiAssistant } from './SomaAiAssistant';
 import { WHATSAPP_TEMPLATES, buildWhatsAppMessage, openWhatsApp } from '../lib/whatsapp';
@@ -299,6 +303,132 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  // Visualizar arquivo em nova aba
+  const openBase64InNewTab = (b64OrDataUrl: string, filename: string) => {
+    const win = window.open('', '_blank');
+    if (win) {
+      const isImage = b64OrDataUrl.startsWith('data:image/') || /\.(png|jpe?g|webp)$/i.test(filename);
+      const contentHtml = isImage
+        ? `<img src="${b64OrDataUrl}" alt="${filename}" style="max-width:100%;max-height:100vh;margin:auto;display:block;" />`
+        : `<embed src="${b64OrDataUrl}" type="application/pdf" width="100%" height="100%" style="border:none;" />`;
+
+      win.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>${filename}</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>html, body { margin:0; padding:0; height:100%; background:#0f172a; display:flex; justify-content:center; align-items:center; }</style>
+          </head>
+          <body>
+            ${contentHtml}
+          </body>
+        </html>
+      `);
+      win.document.close();
+    }
+  };
+
+  // Download direto de arquivo base64
+  const downloadBase64File = (b64OrDataUrl: string, filename: string) => {
+    const link = document.createElement('a');
+    link.href = b64OrDataUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Upload de múltiplos anexos adicionais (Reembolso, Despesas, Evidências)
+  const handleAdditionalFilesUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const fileList = Array.from(files);
+    const readPromises = fileList.map((file) => {
+      return new Promise<AnexoAdicional>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          resolve({
+            id: 'anx-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+            nome: file.name,
+            b64: reader.result as string,
+            tipo: file.type || 'application/pdf',
+            tamanho: file.size,
+            data: new Date().toISOString(),
+          });
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    Promise.all(readPromises).then((novos) => {
+      setFormData((prev) => {
+        const atuais: AnexoAdicional[] = Array.isArray(prev.dados_extra?.anexos_adicionais)
+          ? prev.dados_extra.anexos_adicionais
+          : [];
+        const updated = {
+          ...prev,
+          dados_extra: {
+            ...(prev.dados_extra || {}),
+            anexos_adicionais: [...atuais, ...novos],
+          },
+        };
+        if (updated.id) {
+          onUpdate(updated as Project);
+        }
+        return updated;
+      });
+    });
+
+    e.target.value = '';
+  };
+
+  // Remover anexo adicional
+  const handleRemoveAdditionalFile = (anexoId: string) => {
+    if (!confirm('Deseja remover este documento adicional do projeto?')) return;
+    setFormData((prev) => {
+      const atuais: AnexoAdicional[] = Array.isArray(prev.dados_extra?.anexos_adicionais)
+        ? prev.dados_extra.anexos_adicionais
+        : [];
+      const updated = {
+        ...prev,
+        dados_extra: {
+          ...(prev.dados_extra || {}),
+          anexos_adicionais: atuais.filter((a) => a.id !== anexoId),
+        },
+      };
+      if (updated.id) {
+        onUpdate(updated as Project);
+      }
+      return updated;
+    });
+  };
+
+  // Alternar inclusão da Declaração Simples Nacional (SEBRAE-SP)
+  const handleToggleDeclaracaoSimples = (checked: boolean) => {
+    setFormData((prev) => {
+      const updated = {
+        ...prev,
+        dados_extra: {
+          ...(prev.dados_extra || {}),
+          incluir_declaracao_simples_sp: checked,
+        },
+      };
+      if (updated.id) {
+        onUpdate(updated as Project);
+      }
+      return updated;
+    });
+  };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
   // Helper date formatters for official report
@@ -707,8 +837,16 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
   const resolvedErName = matchedEr?.er || currentUnidadeDemandante || '';
   const resolvedErGestor = matchedEr?.gestor || formData.dados_extra?.gestor_er_credenciado || '';
   const resolvedErEmail = matchedEr?.email || formData.dados_extra?.email_er_credenciado || '';
-  const resolvedGestorOsEmail = formData.dados_extra?.email_gestor || '';
   const generatedNfDiscriminacao = buildSebraeSpNfDiscriminacao(formData);
+  const incluirSimples = formData.dados_extra?.incluir_declaracao_simples_sp !== false;
+  const customAnexosList: AnexoAdicional[] = Array.isArray(formData.dados_extra?.anexos_adicionais)
+    ? formData.dados_extra.anexos_adicionais
+    : [];
+  const totalAnexosCount =
+    (formData.dados_extra?.termo_assinado_b64 ? 1 : 0) +
+    (formData.dados_extra?.nota_fiscal_b64 ? 1 : 0) +
+    (incluirSimples ? 1 : 0) +
+    customAnexosList.length;
 
   const handleUnidadeDemandanteChange = (novaUnidade: string) => {
     const found = findSebraeSpErCredenciado(novaUnidade, formData.municipio);
@@ -795,7 +933,17 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
           onUpdate(updatedProject);
         }
 
-        const msgSucesso = `✅ Pacote SOMA enviado com sucesso via SMTP AMP!\nPara: ${res.to || finalTo}\nCópia (CC): ${res.cc || finalCc}\nAnexos enviados: Relatório Assinado + Nota Fiscal (${res.attachmentsCount || 2} PDFs).`;
+        const docsEnviados: string[] = ['Relatório Assinado', 'Nota Fiscal'];
+        if (formData.dados_extra?.incluir_declaracao_simples_sp !== false) {
+          docsEnviados.push('Declaração Simples Nacional (SP)');
+        }
+        const customCount = Array.isArray(formData.dados_extra?.anexos_adicionais)
+          ? formData.dados_extra.anexos_adicionais.length
+          : 0;
+        if (customCount > 0) {
+          docsEnviados.push(`${customCount} anexo(s) adicional(is)`);
+        }
+        const msgSucesso = `✅ Pacote SOMA enviado com sucesso via SMTP AMP!\nPara: ${res.to || finalTo}\nCópia (CC): ${res.cc || finalCc}\nAnexos enviados: ${docsEnviados.join(' + ')} (total: ${res.attachmentsCount || docsEnviados.length} arquivos).`;
         setSomaEmailResult({ ok: true, msg: msgSucesso });
       } else {
         setSomaEmailResult({
@@ -1659,6 +1807,165 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
               </div>
             </div>
 
+            {/* 4.1. Documentos Oficiais & Anexos Adicionais do Pacote (Declaração Simples Nacional, Reembolso, Evidências) */}
+            <div className="p-4 bg-white rounded-2xl border border-slate-200 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between gap-3 flex-wrap border-b border-slate-100 pb-2.5">
+                <div>
+                  <span className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                    <Paperclip size={14} className="text-indigo-600" />
+                    4.1. Documentos Oficiais & Anexos Adicionais do Pacote:
+                  </span>
+                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                    Declaração de Não Retenção (Simples Nacional) e arquivos complementares (Reembolso, Despesas, Evidências)
+                  </span>
+                </div>
+                <label className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer transition-all shrink-0 flex items-center gap-1.5 shadow-2xs">
+                  <Plus size={14} />
+                  <span>Anexar Documento Extra (PDF/Foto)</span>
+                  <input
+                    type="file"
+                    accept=".pdf,image/*"
+                    multiple
+                    onChange={handleAdditionalFilesUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {/* Item Fixo: Declaração de Não Retenção Simples Nacional (SEBRAE-SP) */}
+              <div className={cn(
+                "p-3 rounded-xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3",
+                incluirSimples
+                  ? "bg-emerald-50/70 border-emerald-200"
+                  : "bg-slate-50 border-slate-200 opacity-70"
+              )}>
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <input
+                    type="checkbox"
+                    id="chk-simples-sp"
+                    checked={incluirSimples}
+                    onChange={(e) => handleToggleDeclaracaoSimples(e.target.checked)}
+                    className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 mt-0.5 cursor-pointer shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <label htmlFor="chk-simples-sp" className="text-xs font-bold text-slate-800 cursor-pointer flex items-center gap-1.5 flex-wrap">
+                      <span>Declaração de Não Retenção na Fonte — Simples Nacional (SEBRAE-SP)</span>
+                      <span className="text-[10px] font-extrabold uppercase px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded">
+                        Assinada (MARCO ANTONIO PAVANI)
+                      </span>
+                    </label>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">
+                      Exigida pelo SEBRAE-SP (Art. 4º da Instrução Normativa RFB nº 1.234/2012 e Lei Complementar nº 123/2006). Disparada em anexo automaticamente no e-mail.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                  <button
+                    type="button"
+                    onClick={() => openBase64InNewTab(DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_B64, DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_NOME)}
+                    className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold px-2.5 py-1 rounded-lg cursor-pointer transition-colors flex items-center gap-1"
+                    title="Visualizar Declaração em nova aba"
+                  >
+                    <Eye size={12} className="text-slate-600" />
+                    <span>Visualizar</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadBase64File(DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_B64, DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_NOME)}
+                    className="bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold px-2.5 py-1 rounded-lg cursor-pointer transition-colors flex items-center gap-1"
+                    title="Baixar PDF da Declaração"
+                  >
+                    <Download size={12} className="text-slate-600" />
+                    <span>Baixar</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Lista de Anexos Adicionais enviados pelo usuário */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-600">
+                  <span>Outros Anexos da Demanda ({customAnexosList.length}):</span>
+                  {customAnexosList.length === 0 && (
+                    <span className="font-normal text-slate-400 italic">
+                      Nenhum anexo adicional inserido
+                    </span>
+                  )}
+                </div>
+
+                {customAnexosList.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-2">
+                    {customAnexosList.map((anx, index) => (
+                      <div
+                        key={anx.id || index}
+                        className="p-2.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-xl flex items-center justify-between gap-2.5 transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center shrink-0">
+                            <FileText size={16} />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-slate-800 truncate block">
+                              {anx.nome}
+                            </span>
+                            <div className="flex items-center gap-2 text-[10px] text-slate-500 font-medium">
+                              <span>{formatFileSize(anx.tamanho)}</span>
+                              <span>•</span>
+                              <span>{anx.data ? new Date(anx.data).toLocaleDateString('pt-BR') : 'Hoje'}</span>
+                              <span className="text-emerald-700 font-semibold">• Pronto p/ envio SMTP</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => openBase64InNewTab(anx.b64, anx.nome)}
+                            className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200"
+                            title="Visualizar anexo"
+                          >
+                            <Eye size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => downloadBase64File(anx.b64, anx.nome)}
+                            className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-white rounded-lg transition-colors border border-transparent hover:border-slate-200"
+                            title="Baixar anexo"
+                          >
+                            <Download size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAdditionalFile(anx.id)}
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
+                            title="Remover anexo"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center">
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      Precisa anexar comprovantes de despesas, <strong>Relatório de Reembolso</strong> para deslocamento presencial ou termos extras?
+                    </p>
+                    <label className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-700 cursor-pointer mt-1">
+                      <span>+ Clique aqui para anexar</span>
+                      <input
+                        type="file"
+                        accept=".pdf,image/*"
+                        multiple
+                        onChange={handleAdditionalFilesUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* 5. Disparo Direto do Pacote SOMA via Servidor SMTP AMP */}
             <div className="p-4 bg-gradient-to-br from-blue-950 via-indigo-950 to-slate-900 text-white rounded-2xl border border-indigo-800/60 space-y-3 shadow-md">
               <div className="flex items-center justify-between gap-2 flex-wrap border-b border-white/10 pb-2.5">
@@ -1667,7 +1974,7 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                     5. Disparo Direto via Servidor SMTP AMP (consultoria@amp.adm.br)
                   </span>
                   <span className="text-xs font-bold text-white block mt-0.5">
-                    Envia automaticamente o Relatório Assinado (PDF) + Nota Fiscal (PDF) ao SEBRAE
+                    Envia automaticamente todos os {totalAnexosCount} documentos anexados ao SEBRAE com cópia obrigatória
                   </span>
                 </div>
                 {resolvedErEmail && (
@@ -1686,7 +1993,7 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                 )}
               </div>
 
-              {/* Checklist visual dos 2 PDFs que serão anexados no e-mail */}
+              {/* Checklist visual de todos os documentos que serão anexados no e-mail */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div
                   className={cn(
@@ -1729,6 +2036,59 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                   <label className="bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold px-2 py-1 rounded-md cursor-pointer shrink-0">
                     <span>{formData.dados_extra?.nota_fiscal_b64 ? 'Trocar' : 'Anexar'}</span>
                     <input type="file" accept=".pdf,image/*" onChange={handleNfUpload} className="hidden" />
+                  </label>
+                </div>
+
+                <div
+                  className={cn(
+                    'rounded-xl p-2.5 border flex items-center justify-between gap-2 text-xs',
+                    incluirSimples
+                      ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200'
+                      : 'bg-slate-700/30 border-slate-600/40 text-slate-300'
+                  )}
+                >
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold uppercase block opacity-80">Anexo 3: Declaração Simples Nacional</span>
+                    <span className="font-extrabold truncate block">
+                      {incluirSimples
+                        ? `✅ ${DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_NOME}`
+                        : '❌ Não inclusa'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleDeclaracaoSimples(!incluirSimples)}
+                    className="bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold px-2 py-1 rounded-md cursor-pointer shrink-0"
+                  >
+                    {incluirSimples ? 'Desativar' : 'Ativar'}
+                  </button>
+                </div>
+
+                <div
+                  className={cn(
+                    'rounded-xl p-2.5 border flex items-center justify-between gap-2 text-xs',
+                    customAnexosList.length > 0
+                      ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200'
+                      : 'bg-white/5 border-white/10 text-slate-300'
+                  )}
+                >
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold uppercase block opacity-80">Anexos Extras ({customAnexosList.length})</span>
+                    <span className="font-extrabold truncate block">
+                      {customAnexosList.length > 0
+                        ? `✅ ${customAnexosList.map((a) => a.nome).join(', ')}`
+                        : 'Nenhum anexo extra'}
+                    </span>
+                  </div>
+                  <label className="bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold px-2 py-1 rounded-md cursor-pointer shrink-0">
+                    <span>+ Adicionar</span>
+                    <input
+                      type="file"
+                      accept=".pdf,image/*"
+                      multiple
+                      onChange={handleAdditionalFilesUpload}
+                      className="hidden"
+                    />
                   </label>
                 </div>
               </div>
@@ -1790,8 +2150,8 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                 <Send size={16} />
                 <span>
                   {isSendingSomaEmail
-                    ? 'Enviando Pacote SOMA (Relatório + NF) via SMTP AMP...'
-                    : `Encaminhar Pacote SOMA para ${resolvedErName || 'SEBRAE'} (${customDestEmail || resolvedErEmail || 'E-mail ER'}) + CC consultoria@amp.adm.br`}
+                    ? `Enviando Pacote SOMA (${totalAnexosCount} documentos) via SMTP AMP...`
+                    : `Encaminhar Pacote SOMA (${totalAnexosCount} anexos) para ${resolvedErName || 'SEBRAE'} (${customDestEmail || resolvedErEmail || 'E-mail ER'}) + CC consultoria@amp.adm.br`}
                 </span>
               </button>
             </div>

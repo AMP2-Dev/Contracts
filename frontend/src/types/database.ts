@@ -85,6 +85,15 @@ export const KANBAN_COLUMNS: KanbanColumnDef[] = [
   { id: 'concluido', title: 'Concluído', color: 'bg-emerald-500' },
 ];
 
+export interface AnexoAdicional {
+  id: string;
+  nome: string;
+  b64: string;
+  tipo?: string;
+  tamanho?: number;
+  data: string;
+}
+
 export interface BoletoItem {
   numeroParcela: number;
   vencimento: string;

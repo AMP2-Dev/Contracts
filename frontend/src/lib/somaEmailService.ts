@@ -1,4 +1,8 @@
-import type { Project } from '../types/database';
+import type { Project, AnexoAdicional } from '../types/database';
+import {
+  DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_NOME,
+  DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_B64,
+} from '../assets/declaracaoSebraeSp';
 
 export interface SomaAttachment {
   filename: string;
@@ -82,6 +86,26 @@ export function buildSomaPackageEmailContent(
   const empresaCredenciada =
     project.empresa_credenciada || 'AMP DO BRASIL SOLUCOES ADMINISTRATIVAS E TECNOLOGICAS LTDA';
 
+  const includesDeclaracaoSimples = extra.incluir_declaracao_simples_sp !== false;
+  const customAttachments: AnexoAdicional[] = Array.isArray(extra.anexos_adicionais) ? extra.anexos_adicionais : [];
+
+  const docListPlain: string[] = [
+    '1. Relatório de Prestação de Serviço SOMA SEBRAE devidamente assinado + Evidência de Atendimento',
+    '2. Nota Fiscal de Serviços Eletrônica (NFS-e Padrão Nacional)',
+  ];
+
+  if (includesDeclaracaoSimples) {
+    docListPlain.push('3. Declaração de Não Retenção do Simples Nacional (SEBRAE-SP - Lei nº 9.430/1996 e LC nº 123/2006)');
+  }
+
+  customAttachments.forEach((anx, i) => {
+    docListPlain.push(`${docListPlain.length + 1}. ${anx.nome || `Anexo Adicional ${i + 1}`}`);
+  });
+
+  const docListHtml = docListPlain
+    .map((item) => `<li style="margin-bottom:4px;"><strong>${item.replace(/^\d+\.\s*/, '')}</strong></li>`)
+    .join('\n');
+
   const subject = `Prestação de Contas SOMA SEBRAE-SP - OS ${osNum} - RAE ${raeNum} - ${clientName}`;
 
   const text = [
@@ -100,8 +124,7 @@ export function buildSomaPackageEmailContent(
     `- Valor Total da OS: R$ ${valorFormatado}`,
     ``,
     `Documentos em anexo (PDF):`,
-    `1. Relatório de Prestação de Serviço SOMA SEBRAE devidamente assinado + Evidência de Atendimento`,
-    `2. Nota Fiscal de Serviços Eletrônica (NFS-e Padrão Nacional)`,
+    ...docListPlain,
     ``,
     `Permanecemos à inteira disposição para quaisquer esclarecimentos.`,
     ``,
@@ -173,11 +196,10 @@ export function buildSomaPackageEmailContent(
 
       <div style="background-color:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;margin:16px 0;">
         <div style="font-weight:bold;color:#166534;font-size:12.5px;margin-bottom:6px;">
-          📎 Documentos Oficiais Anexados em PDF:
+          📎 Documentos Oficiais Anexados em PDF (${docListPlain.length} itens):
         </div>
         <ol style="margin:0;padding-left:18px;color:#15803d;font-size:12.5px;">
-          <li style="margin-bottom:4px;"><strong>Relatório de Prestação de Serviço SOMA SEBRAE</strong> (Assinado pelo Consultor e Cliente + Evidência)</li>
-          <li><strong>Nota Fiscal de Serviços Eletrônica (DANFSe / NFS-e Nacional)</strong></li>
+          ${docListHtml}
         </ol>
       </div>
 
@@ -234,6 +256,27 @@ export async function sendSomaPackageViaSmtp(
       contentType: 'application/pdf',
     });
   }
+
+  // Anexo 3: Declaração de Não Retenção Simples Nacional (SEBRAE-SP)
+  if (extra.incluir_declaracao_simples_sp !== false) {
+    attachments.push({
+      filename: DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_NOME,
+      content: stripDataUrlPrefix(DECLARACAO_SIMPLES_NACIONAL_SEBRAE_SP_B64),
+      contentType: 'application/pdf',
+    });
+  }
+
+  // Anexos Adicionais customizados pelo usuário (ex: Relatório de Reembolso, Comprovantes de Despesas, etc.)
+  const customAttachments: AnexoAdicional[] = Array.isArray(extra.anexos_adicionais) ? extra.anexos_adicionais : [];
+  customAttachments.forEach((anx, idx) => {
+    if (anx && anx.b64) {
+      attachments.push({
+        filename: anx.nome || `Anexo_Adicional_${idx + 1}.pdf`,
+        content: stripDataUrlPrefix(anx.b64),
+        contentType: anx.tipo || 'application/pdf',
+      });
+    }
+  });
 
   const finalCc = ensureConsultoriaCc(options.cc);
 
