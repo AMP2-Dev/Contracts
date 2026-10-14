@@ -24,10 +24,20 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught error in component tree:', error, errorInfo);
+    if (error?.name === 'QuotaExceededError' || error?.message?.toLowerCase().includes('quota')) {
+      try {
+        localStorage.removeItem('amp_projects');
+      } catch (e) {}
+    }
     this.setState({ errorInfo });
   }
 
   private handleSoftReload = () => {
+    try {
+      if (this.state.error?.name === 'QuotaExceededError' || this.state.error?.message?.toLowerCase().includes('quota')) {
+        localStorage.removeItem('amp_projects');
+      }
+    } catch (e) {}
     this.setState({ hasError: false, error: null, errorInfo: null });
   };
 

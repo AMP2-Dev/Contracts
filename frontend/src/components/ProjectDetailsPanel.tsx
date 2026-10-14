@@ -19,6 +19,10 @@ import {
   isSebraeSpProject,
 } from '../lib/sebraeSpUtils';
 import { sendSomaPackageViaSmtp, ensureConsultoriaCc } from '../lib/somaEmailService';
+import {
+  saveProjectAttachmentsToIdb,
+  hydrateProjectFromIdb,
+} from '../lib/attachmentStorage';
 
 interface ProjectDetailsPanelProps {
   project: Project | null;
@@ -63,6 +67,19 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
         ? ensureConsultoriaCc(gestorMail)
         : 'consultoria@amp.adm.br';
       setCustomCcEmail(defaultCc);
+
+      // Hidrata anexos pesados do IndexedDB se não estiverem no cache
+      hydrateProjectFromIdb(project).then((hydrated) => {
+        if (hydrated && hydrated !== project) {
+          setFormData((prev) => ({
+            ...prev,
+            dados_extra: {
+              ...(prev.dados_extra || {}),
+              ...(hydrated.dados_extra || {}),
+            },
+          }));
+        }
+      }).catch(() => {});
     }
   }, [project]);
 

@@ -23,6 +23,10 @@ import { KANBAN_COLUMNS, type Project, type ProjectStatus } from '../types/datab
 import { parsePdfFile } from '../lib/pdfParser';
 import { SETUP_DATABASE_SQL } from '../lib/databaseSetupSql';
 import { formatCurrency } from '../lib/utils';
+import {
+  safeSaveProjectsToLocalStorage,
+  saveProjectAttachmentsToIdb,
+} from '../lib/attachmentStorage';
 
 export const OS_071208_CLIENTS: Project[] = [
   {
@@ -516,7 +520,7 @@ export function KanbanBoard() {
   const saveProjects = (newList: Project[]) => {
     const cleanList = deduplicateProjects(newList);
     setProjects(cleanList);
-    localStorage.setItem('amp_projects', JSON.stringify(cleanList));
+    safeSaveProjectsToLocalStorage(cleanList);
   };
 
   const handleCardStatusChange = async (projectId: string, newStatus: ProjectStatus) => {
@@ -612,7 +616,13 @@ export function KanbanBoard() {
         if (dbProjects.length > 0) {
           const cleanList = deduplicateProjects(dbProjects as Project[], true);
           setProjects(cleanList);
-          localStorage.setItem('amp_projects', JSON.stringify(cleanList));
+          safeSaveProjectsToLocalStorage(cleanList);
+          // Salva anexos pesados no IndexedDB em background
+          cleanList.forEach((p) => {
+            if (p.dados_extra && (p.dados_extra.termo_assinado_b64 || p.dados_extra.nota_fiscal_b64 || p.dados_extra.foto_cliente || p.dados_extra.anexos_adicionais)) {
+              saveProjectAttachmentsToIdb(p).catch(() => {});
+            }
+          });
           if (showNotification) {
             alert(`Sincronizado com sucesso! ${cleanList.length} contrato(s) carregado(s) diretamente do banco Supabase.`);
           }
@@ -772,7 +782,7 @@ export function KanbanBoard() {
 
     const updated = projects.filter((p) => p.id !== projectId);
     setProjects(updated);
-    localStorage.setItem('amp_projects', JSON.stringify(updated));
+    safeSaveProjectsToLocalStorage(updated);
     if (selectedProject?.id === projectId) {
       setSelectedProject(null);
     }
@@ -791,7 +801,7 @@ export function KanbanBoard() {
     const list = Array.isArray(newProjects) ? newProjects : [newProjects];
     setProjects((prevProjects) => {
       const updated = [...list, ...prevProjects];
-      localStorage.setItem('amp_projects', JSON.stringify(updated));
+      safeSaveProjectsToLocalStorage(updated);
       return updated;
     });
 
@@ -808,6 +818,11 @@ export function KanbanBoard() {
   };
 
   const handleProjectUpdate = (updatedProject: Project) => {
+    // Salva anexos pesados no IndexedDB (sem limite de 5MB)
+    saveProjectAttachmentsToIdb(updatedProject).catch((err) => {
+      console.warn('Erro ao salvar anexos no IndexedDB:', err);
+    });
+
     setProjects((prevProjects) => {
       let found = false;
       const nextList = prevProjects.map((p) => {
@@ -818,7 +833,7 @@ export function KanbanBoard() {
         return p;
       });
       const finalList = found ? nextList : [updatedProject, ...prevProjects];
-      localStorage.setItem('amp_projects', JSON.stringify(finalList));
+      safeSaveProjectsToLocalStorage(finalList);
       return finalList;
     });
 
