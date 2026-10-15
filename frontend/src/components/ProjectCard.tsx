@@ -39,6 +39,14 @@ export function ProjectCard({ project, isOverlay, onClick, onDelete, onStatusCha
     const msg = buildWhatsAppMessage(templateId, project);
     openWhatsApp(project.celular || project.telefone, msg);
     setIsWhatsappOpen(false);
+
+    if (onStatusChange) {
+      if (templateId === 'lembrete' && (project.status === 'novo_contrato' || project.status === 'contato_inicial')) {
+        onStatusChange(project.id, 'agendamento');
+      } else if (templateId === 'convite' && project.status === 'novo_contrato') {
+        onStatusChange(project.id, 'contato_inicial');
+      }
+    }
   };
 
   const {

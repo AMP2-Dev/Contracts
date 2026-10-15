@@ -76,7 +76,7 @@ export interface KanbanColumnDef {
 export const KANBAN_COLUMNS: KanbanColumnDef[] = [
   { id: 'novo_contrato', title: 'Novo Contrato', color: 'bg-indigo-500' },
   { id: 'contato_inicial', title: 'Contato Inicial', color: 'bg-sky-500' },
-  { id: 'agendamento', title: 'Agendamento', color: 'bg-amber-500' },
+  { id: 'agendamento', title: 'Atend. Agendado', color: 'bg-amber-500' },
   { id: 'atendimento_realizado', title: 'Atend. Realizado', color: 'bg-fuchsia-500' },
   { id: 'relatorio_elaboracao', title: 'Fazendo Relatório', color: 'bg-pink-500' },
   { id: 'relatorio_enviado', title: 'Relatório Enviado', color: 'bg-purple-500' },

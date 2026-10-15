@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, FileText, Building2, User, Clock, CheckCircle2, MessageSquare, Mail, Camera, FileCheck, Send, Printer, Trash2, ExternalLink, FileSignature, Check, Calendar, Clipboard, AlertTriangle, RotateCcw, ShieldCheck, Shield, Paperclip, Plus, Eye, Download } from 'lucide-react';
-import type { Project, CompanyConfig, AnexoAdicional } from '../types/database';
+import { KANBAN_COLUMNS, type Project, type CompanyConfig, type AnexoAdicional, type ProjectStatus } from '../types/database';
 import { supabase } from '../lib/supabase';
 import { cn, maskPhone } from '../lib/utils';
 import { REPORT_ARROW_B64, REPORT_BANNER_B64, REPORT_LOGO_B64 } from '../assets/reportAssets';
@@ -284,6 +284,37 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
     } catch (e) {
       return getCalendarLink();
     }
+  };
+
+  // Criar evento no Google Agenda e movimentar automaticamente para 'Atend. Agendado'
+  const handleCreateGoogleCalendarEvent = () => {
+    // 1. Abre a tela do Google Calendar com o evento pré-preenchido
+    const url = getGoogleCalendarCreateEventUrl();
+    window.open(url, '_blank');
+
+    // 2. Movimenta automaticamente para 'agendamento' ("Atend. Agendado")
+    if (formData.status !== 'agendamento') {
+      const updated = {
+        ...formData,
+        status: 'agendamento' as ProjectStatus,
+        atualizado_em: new Date().toISOString(),
+      } as Project;
+
+      setFormData(updated);
+      onUpdate(updated);
+    }
+  };
+
+  // Movimentar manualmente para 'agendamento' ("Atend. Agendado")
+  const handleMoveToAgendamento = () => {
+    const updated = {
+      ...formData,
+      status: 'agendamento' as ProjectStatus,
+      atualizado_em: new Date().toISOString(),
+    } as Project;
+
+    setFormData(updated);
+    onUpdate(updated);
   };
 
   // Client Photo Upload
@@ -1050,6 +1081,28 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                   📩 {resolvedErEmail}
                 </span>
               )}
+              {/* Seletor de Fase / Status da Demanda */}
+              <select
+                value={formData.status || 'novo_contrato'}
+                onChange={(e) => {
+                  const newStatus = e.target.value as ProjectStatus;
+                  const updated = {
+                    ...formData,
+                    status: newStatus,
+                    atualizado_em: new Date().toISOString(),
+                  } as Project;
+                  setFormData(updated);
+                  onUpdate(updated);
+                }}
+                className="text-[11px] font-extrabold bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-md py-1 px-2 text-slate-800 focus:outline-none cursor-pointer"
+                title="Status atual da demanda no Kanban"
+              >
+                {KANBAN_COLUMNS.map((col) => (
+                  <option key={col.id} value={col.id}>
+                    Fase: {col.title}
+                  </option>
+                ))}
+              </select>
             </div>
             <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
               {formData.nome_cliente || formData.razao_social || project.nome_cliente || 'Cliente Sem Nome'}
@@ -1076,7 +1129,7 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                   Comunicação & Agendamento Rápido
                 </h3>
                 <p className="text-[11px] text-purple-300/90 mt-0.5">
-                  Dispare mensagens no WhatsApp em 1 clique (o card só muda de fase quando você decidir manualmente):
+                  Dispare mensagens no WhatsApp e sincronize sua agenda (criar no Google Agenda move automaticamente para <strong>Atend. Agendado</strong>):
                 </p>
               </div>
 
@@ -1091,16 +1144,31 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                   <Calendar size={13} />
                   <span>Agendamentos Google</span>
                 </a>
-                <a
-                  href={getGoogleCalendarCreateEventUrl()}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={handleCreateGoogleCalendarEvent}
                   className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] px-3 py-1.5 rounded-lg border border-emerald-400/30 transition-all cursor-pointer shadow-xs"
-                  title="Criar evento na sua Google Agenda pré-preenchido com este cliente e RAE"
+                  title="Criar evento na sua Google Agenda e movimentar automaticamente este contrato para 'Atend. Agendado'"
                 >
                   <Plus size={13} />
-                  <span>+ Criar no Google Agenda</span>
-                </a>
+                  <span>+ Criar no Google Agenda (Move p/ Agendado)</span>
+                </button>
+                {formData.status === 'agendamento' ? (
+                  <span className="inline-flex items-center gap-1.5 bg-amber-500/20 text-amber-300 font-bold text-[11px] px-2.5 py-1.5 rounded-lg border border-amber-400/40">
+                    <Check size={13} />
+                    <span>✓ Atend. Agendado</span>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleMoveToAgendamento}
+                    className="inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white font-semibold text-[11px] px-2.5 py-1.5 rounded-lg border border-amber-400/30 transition-all cursor-pointer shadow-xs"
+                    title="Mover diretamente para a coluna 'Atend. Agendado'"
+                  >
+                    <Calendar size={13} />
+                    <span>Mover p/ Atend. Agendado</span>
+                  </button>
+                )}
                 <a
                   href={getEmailLink()}
                   className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-white font-semibold text-[11px] px-3 py-1.5 rounded-lg border border-white/20 transition-all cursor-pointer"
@@ -1122,6 +1190,17 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                     const phone = formData.celular || formData.telefone || project?.celular || project?.telefone;
                     const msg = buildWhatsAppMessage(tpl.id, formData);
                     openWhatsApp(phone, msg);
+                    if (tpl.id === 'lembrete' && (formData.status === 'novo_contrato' || formData.status === 'contato_inicial')) {
+                      handleMoveToAgendamento();
+                    } else if (tpl.id === 'convite' && formData.status === 'novo_contrato') {
+                      const updated = {
+                        ...formData,
+                        status: 'contato_inicial' as ProjectStatus,
+                        atualizado_em: new Date().toISOString(),
+                      } as Project;
+                      setFormData(updated);
+                      onUpdate(updated);
+                    }
                   }}
                   className="flex items-start gap-2.5 p-2.5 rounded-xl bg-white/5 hover:bg-emerald-600/90 text-left border border-white/10 hover:border-emerald-400/50 transition-all group cursor-pointer"
                 >
