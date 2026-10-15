@@ -250,6 +250,42 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
     }
   };
 
+  // Google Calendar Appointment Link
+  const getCalendarLink = () => {
+    try {
+      const saved = localStorage.getItem('amp_company_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.calendarLink) return parsed.calendarLink;
+      }
+    } catch (e) {}
+    return 'https://calendar.app.google/skRSHv2QBUjY9ae16';
+  };
+
+  // Google Calendar Event Creator Link (Pré-preenche evento na agenda pessoal do consultor com dados do cliente)
+  const getGoogleCalendarCreateEventUrl = () => {
+    try {
+      const clientName = formData.nome_cliente || formData.razao_social || 'Cliente';
+      const rae = formData.codigo_rae || '';
+      const solucao = formData.solucao_contratada || 'Consultoria SEBRAE';
+      const title = `Consultoria SEBRAE (${rae}) - ${clientName}`;
+      const details = `Atendimento SOMA SEBRAE\nCliente: ${clientName}\nRAE: ${rae}\nSolução: ${solucao}\nMunicípio: ${formData.municipio || 'Remoto'}\nTelefone: ${formData.celular || formData.telefone || ''}\nE-mail: ${formData.email_cliente || ''}`;
+
+      const baseUrl = 'https://calendar.google.com/calendar/render?action=TEMPLATE';
+      const params = new URLSearchParams({
+        text: title,
+        details: details,
+        location: formData.municipio ? `${formData.municipio} (Remoto)` : 'Remoto',
+      });
+      if (formData.email_cliente) {
+        params.append('add', formData.email_cliente);
+      }
+      return `${baseUrl}&${params.toString()}`;
+    } catch (e) {
+      return getCalendarLink();
+    }
+  };
+
   // Client Photo Upload
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1044,16 +1080,26 @@ export function ProjectDetailsPanel({ project, isOpen, onClose, onUpdate, onDele
                 </p>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
                 <a
-                  href="https://calendar.app.google/skRSHv2QBUjY9ae16"
+                  href={getCalendarLink()}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 bg-blue-600/80 hover:bg-blue-600 text-white font-semibold text-[11px] px-3 py-1.5 rounded-lg border border-blue-400/30 transition-all cursor-pointer"
-                  title="Abrir Google Agenda"
+                  className="inline-flex items-center gap-1.5 bg-blue-600/80 hover:bg-blue-600 text-white font-semibold text-[11px] px-3 py-1.5 rounded-lg border border-blue-400/30 transition-all cursor-pointer shadow-xs"
+                  title="Abrir sua Página de Agendamentos do Google Calendar"
                 >
                   <Calendar size={13} />
-                  <span>Google Agenda</span>
+                  <span>Agendamentos Google</span>
+                </a>
+                <a
+                  href={getGoogleCalendarCreateEventUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] px-3 py-1.5 rounded-lg border border-emerald-400/30 transition-all cursor-pointer shadow-xs"
+                  title="Criar evento na sua Google Agenda pré-preenchido com este cliente e RAE"
+                >
+                  <Plus size={13} />
+                  <span>+ Criar no Google Agenda</span>
                 </a>
                 <a
                   href={getEmailLink()}
